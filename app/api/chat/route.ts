@@ -50,32 +50,33 @@ ${sectoresList}
 RUBROS DISPONIBLES (usa SOLO estos IDs):
 ${rubrosList}
 
-REGLAS CRÍTICAS:
-1. NUNCA registres un avance sin antes CONFIRMAR con el usuario mediante un mensaje de texto.
-2. Si el usuario menciona un trabajo que NO coincide claramente con ningún rubro de la lista, DEBES PREGUNTAR: "No reconozco ese rubro. ¿A cuál de estos se refiere?" y listar los rubros disponibles.
-3. Si el usuario menciona un sector que NO existe en la lista, PREGUNTA cuál sector es el correcto.
-4. SIEMPRE responde con un mensaje de texto ANTES de llamar a cualquier herramienta para confirmar qué vas a hacer.
+REGLAS:
 
-FLUJO CORRECTO PARA REGISTRAR:
-1. El usuario dice algo como "terminé la pintura en la UF 502"
-2. TÚ RESPONDES CON TEXTO: "Entendido. Voy a registrar: Pintura completada en UF 502. ¿Confirmo el registro?"
-3. El usuario dice "sí" o "confirmar"
-4. RECIÉN AHÍ llamas a registrarAvances con confirmar=true
+1. SI ENTIENDES CLARAMENTE el rubro y el sector:
+   - Registra el avance DIRECTAMENTE llamando a registrarAvances con confirmar=true
+   - Informa al usuario lo que guardaste, por ejemplo: "Listo, se registro el avance de Pintura en UF 502."
+   - El usuario corregira si hay algun error
 
-FLUJO CUANDO NO ENTIENDES:
-1. Usuario: "instalé las tomas en la 502"
-2. Si "tomas" no coincide claramente con un rubro → TÚ PREGUNTAS: "¿A qué rubro corresponde 'tomas'? Los rubros disponibles son: [lista]"
-3. Usuario aclara: "electricidad"
-4. TÚ CONFIRMAS: "Perfecto, voy a registrar avance de Electricidad (instalación de tomas) en UF 502. ¿Confirmo?"
-5. Usuario: "sí"
-6. Llamas a registrarAvances
+2. SI NO RECONOCES el rubro mencionado:
+   - NO registres nada
+   - PREGUNTA: "No reconozco ese rubro. ¿A cual de estos se refiere?" y lista los rubros disponibles
+   - Espera la aclaracion del usuario antes de registrar
 
-SOBRE MÚLTIPLES REGISTROS:
-- "pintura lista en UF 1, 2 y 3" → 3 registros, uno por cada UF
-- "terminé electricidad y pintura en el hall" → 2 registros, uno por cada rubro
-- SIEMPRE confirma el resumen completo antes de guardar
+3. SI NO RECONOCES el sector mencionado:
+   - NO registres nada  
+   - PREGUNTA cual es el sector correcto
+   - Espera la aclaracion del usuario antes de registrar
 
-Responde SIEMPRE en español, sé conciso pero amable. NUNCA llames a herramientas sin antes enviar un mensaje de confirmación al usuario.`
+4. SOBRE MULTIPLES REGISTROS:
+   - "pintura lista en UF 1, 2 y 3" → registra 3 avances (uno por cada UF)
+   - "termine electricidad y pintura en el hall" → registra 2 avances (uno por cada rubro)
+   - Informa el resumen de todo lo que guardaste
+
+5. CONSULTAS:
+   - Cuando el usuario pregunte por avances, usa consultarAvances
+   - Cuando pregunte que sectores o rubros hay, usa listarSectores o listarRubros
+
+Responde SIEMPRE en espanol, se conciso y directo.`
 
   const result = streamText({
     model: groq('llama-3.3-70b-versatile'),
@@ -83,29 +84,21 @@ Responde SIEMPRE en español, sé conciso pero amable. NUNCA llames a herramient
     messages: await convertToModelMessages(messages),
     tools: {
       registrarAvances: tool({
-        description: 'Registra uno o más avances de obra. Puede registrar el mismo avance en múltiples sectores o múltiples rubros.',
+        description: 'Registra uno o mas avances de obra. Usa esta herramienta SOLO cuando entiendas claramente el sector y rubro.',
         inputSchema: z.object({
           avances: z.array(z.object({
             sector_id: z.string().describe('ID del sector'),
             rubro_id: z.string().describe('ID del rubro'),
-            descripcion: z.string().describe('Descripción del avance realizado'),
+            descripcion: z.string().describe('Descripcion del avance realizado'),
           })).describe('Lista de avances a registrar'),
-          confirmar: z.boolean().describe('True para guardar, false para solo mostrar resumen'),
         }),
-        execute: async ({ avances, confirmar }) => {
-          if (!confirmar) {
-            // Return summary for confirmation
-            const resumen = avances.map((a) => {
-              const sector = sectores.find((s: { id: string }) => s.id === a.sector_id)
-              const rubro = rubros.find((r: { id: string }) => r.id === a.rubro_id)
-              return `- ${sector?.nombre || 'Sector desconocido'} / ${rubro?.nombre || 'Rubro desconocido'}: ${a.descripcion}`
-            })
-            return {
-              success: false,
-              message: `Se van a registrar ${avances.length} avance(s):\n${resumen.join('\n')}\n\n¿Confirmas el registro?`,
-              pendingCount: avances.length,
-            }
-          }
+        execute: async ({ avances }) => {
+          // Build summary for response
+          const resumen = avances.map((a) => {
+            const sector = sectores.find((s: { id: string }) => s.id === a.sector_id)
+            const rubro = rubros.find((r: { id: string }) => r.id === a.rubro_id)
+            return `${rubro?.nombre || 'Rubro'} en ${sector?.nombre || 'Sector'}`
+          })
 
           // Insert all avances
           const { data, error } = await supabase
@@ -127,7 +120,9 @@ Responde SIEMPRE en español, sé conciso pero amable. NUNCA llames a herramient
 
           return {
             success: true,
-            message: `Se registraron ${data.length} avance(s) correctamente.`,
+            message: data.length === 1 
+              ? `Registrado: ${resumen[0]}.`
+              : `Se registraron ${data.length} avances: ${resumen.join(', ')}.`,
             count: data.length,
           }
         },
