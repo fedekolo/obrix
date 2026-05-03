@@ -46,15 +46,6 @@ export function ChatInterface({ obraId, sectores, rubros, userId }: ChatInterfac
 
   const isLoading = status === 'streaming' || status === 'submitted'
 
-  // Debug logs
-  useEffect(() => {
-    console.log('[v0] Chat status:', status)
-    console.log('[v0] Messages count:', messages.length)
-    if (messages.length > 0) {
-      console.log('[v0] Last message:', JSON.stringify(messages[messages.length - 1], null, 2))
-    }
-  }, [status, messages])
-
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
@@ -67,21 +58,15 @@ export function ChatInterface({ obraId, sectores, rubros, userId }: ChatInterfac
     setInputValue('')
     setPendingImages([])
 
-    console.log('[v0] Sending message:', messageContent)
-    try {
-      await sendMessage({
-        text: messageContent,
-        ...(pendingImages.length > 0 && {
-          experimental_attachments: pendingImages.map(url => ({
-            contentType: 'image/jpeg',
-            url,
-          })),
-        }),
-      })
-      console.log('[v0] Message sent successfully')
-    } catch (err) {
-      console.error('[v0] Error sending message:', err)
-    }
+    await sendMessage({
+      text: messageContent,
+      ...(pendingImages.length > 0 && {
+        experimental_attachments: pendingImages.map(url => ({
+          contentType: 'image/jpeg',
+          url,
+        })),
+      }),
+    })
   }
 
   const startRecording = async () => {
@@ -103,8 +88,8 @@ export function ChatInterface({ obraId, sectores, rubros, userId }: ChatInterfac
 
       mediaRecorder.start()
       setIsRecording(true)
-    } catch (err) {
-      console.error('[v0] Error accessing microphone:', err)
+    } catch {
+      // Microphone access denied or unavailable
     }
   }
 
@@ -131,8 +116,8 @@ export function ChatInterface({ obraId, sectores, rubros, userId }: ChatInterfac
         setInputValue((prev) => (prev ? `${prev} ${text}` : text))
         textareaRef.current?.focus()
       }
-    } catch (err) {
-      console.error('[v0] Transcription error:', err)
+    } catch {
+      // Transcription failed
     } finally {
       setIsTranscribing(false)
     }
@@ -153,8 +138,8 @@ export function ChatInterface({ obraId, sectores, rubros, userId }: ChatInterfac
           const { url } = await res.json()
           setPendingImages(prev => [...prev, url])
         }
-      } catch (err) {
-        console.error('[v0] Upload error:', err)
+      } catch {
+        // Upload failed
       }
     }
 

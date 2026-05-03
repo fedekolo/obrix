@@ -9,11 +9,6 @@ const groq = createGroq({
 
 export async function POST(req: Request) {
   const { messages, obraId, sectores, rubros } = await req.json()
-  
-  console.log('[v0] Chat API called - obraId:', obraId)
-  console.log('[v0] Sectores count:', sectores?.length || 0)
-  console.log('[v0] Rubros count:', rubros?.length || 0)
-  console.log('[v0] Messages count:', messages?.length || 0)
 
   const supabase = await createClient()
   
@@ -34,6 +29,14 @@ export async function POST(req: Request) {
     return new Response('Obra not found', { status: 404 })
   }
 
+  const sectoresList = sectores.length > 0 
+    ? sectores.map((s: { id: string; nombre: string; tipo: string }) => `- ${s.nombre} (ID: ${s.id}, Tipo: ${s.tipo})`).join('\n')
+    : '(No hay sectores configurados. Pide al usuario que los configure primero.)'
+    
+  const rubrosList = rubros.length > 0
+    ? rubros.map((r: { id: string; nombre: string }) => `- ${r.nombre} (ID: ${r.id})`).join('\n')
+    : '(No hay rubros configurados. Pide al usuario que los configure primero.)'
+
   const systemPrompt = `Eres un asistente especializado en gestión de avance de obra para la construcción.
 Tu objetivo es ayudar a los usuarios a registrar y consultar el progreso de trabajos en una obra llamada "${obra.nombre}".
 
@@ -41,33 +44,38 @@ INFORMACIÓN DE LA OBRA:
 - Nombre: ${obra.nombre}
 - Dirección: ${obra.direccion || 'No especificada'}
 
-SECTORES DISPONIBLES (usa estos IDs exactos):
-${sectores.map((s: { id: string; nombre: string; tipo: string }) => `- ${s.nombre} (ID: ${s.id}, Tipo: ${s.tipo})`).join('\n')}
+SECTORES DISPONIBLES (usa SOLO estos IDs):
+${sectoresList}
 
-RUBROS DISPONIBLES (usa estos IDs exactos):
-${rubros.map((r: { id: string; nombre: string }) => `- ${r.nombre} (ID: ${r.id})`).join('\n')}
+RUBROS DISPONIBLES (usa SOLO estos IDs):
+${rubrosList}
 
-INSTRUCCIONES:
-1. Cuando el usuario quiera REGISTRAR un avance:
-   - Identifica los sectores mencionados (pueden ser múltiples, ej: "UF 1, 2 y 3" o "UF 1 a 5")
-   - Identifica el/los rubro(s) mencionados
-   - Extrae la descripción del trabajo realizado
-   - Usa la herramienta registrarAvances para guardar los registros
-   - Si falta información (sector o rubro), pregunta al usuario
+REGLAS CRÍTICAS:
+1. NUNCA registres un avance sin antes CONFIRMAR con el usuario mediante un mensaje de texto.
+2. Si el usuario menciona un trabajo que NO coincide claramente con ningún rubro de la lista, DEBES PREGUNTAR: "No reconozco ese rubro. ¿A cuál de estos se refiere?" y listar los rubros disponibles.
+3. Si el usuario menciona un sector que NO existe en la lista, PREGUNTA cuál sector es el correcto.
+4. SIEMPRE responde con un mensaje de texto ANTES de llamar a cualquier herramienta para confirmar qué vas a hacer.
 
-2. Cuando el usuario quiera CONSULTAR avances:
-   - Usa la herramienta consultarAvances con los filtros apropiados
-   - Presenta los resultados de forma clara y organizada
+FLUJO CORRECTO PARA REGISTRAR:
+1. El usuario dice algo como "terminé la pintura en la UF 502"
+2. TÚ RESPONDES CON TEXTO: "Entendido. Voy a registrar: Pintura completada en UF 502. ¿Confirmo el registro?"
+3. El usuario dice "sí" o "confirmar"
+4. RECIÉN AHÍ llamas a registrarAvances con confirmar=true
 
-3. Si el usuario pregunta qué sectores o rubros hay disponibles:
-   - Usa las herramientas listarSectores o listarRubros
+FLUJO CUANDO NO ENTIENDES:
+1. Usuario: "instalé las tomas en la 502"
+2. Si "tomas" no coincide claramente con un rubro → TÚ PREGUNTAS: "¿A qué rubro corresponde 'tomas'? Los rubros disponibles son: [lista]"
+3. Usuario aclara: "electricidad"
+4. TÚ CONFIRMAS: "Perfecto, voy a registrar avance de Electricidad (instalación de tomas) en UF 502. ¿Confirmo?"
+5. Usuario: "sí"
+6. Llamas a registrarAvances
 
-4. IMPORTANTE sobre múltiples registros:
-   - Si el usuario dice "pintura lista en UF 1 a 5", debes crear 5 registros (uno por cada UF)
-   - Si dice "terminé electricidad y pintura en el hall", debes crear 2 registros (uno por cada rubro)
-   - Siempre confirma el resumen antes de guardar
+SOBRE MÚLTIPLES REGISTROS:
+- "pintura lista en UF 1, 2 y 3" → 3 registros, uno por cada UF
+- "terminé electricidad y pintura en el hall" → 2 registros, uno por cada rubro
+- SIEMPRE confirma el resumen completo antes de guardar
 
-Responde siempre en español y sé conciso pero amable.`
+Responde SIEMPRE en español, sé conciso pero amable. NUNCA llames a herramientas sin antes enviar un mensaje de confirmación al usuario.`
 
   const result = streamText({
     model: groq('llama-3.3-70b-versatile'),
