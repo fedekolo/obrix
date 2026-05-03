@@ -8,9 +8,15 @@ const groq = createGroq({
 })
 
 export async function POST(req: Request) {
-  const { messages, obraId, sectores, rubros, userId } = await req.json()
+  const { messages, obraId, sectores, rubros } = await req.json()
 
   const supabase = await createClient()
+  
+  // Get authenticated user
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
+  if (authError || !user) {
+    return new Response('Unauthorized', { status: 401 })
+  }
 
   // Verify user has access to this obra
   const { data: obra } = await supabase
@@ -96,7 +102,7 @@ Responde siempre en español y sé conciso pero amable.`
                 obra_id: obraId,
                 sector_id: a.sector_id,
                 rubro_id: a.rubro_id,
-                user_id: userId,
+                user_id: user.id,
                 descripcion: a.descripcion,
               }))
             )
