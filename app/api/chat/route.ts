@@ -9,6 +9,11 @@ const groq = createGroq({
 
 export async function POST(req: Request) {
   const { messages, obraId, sectores, rubros } = await req.json()
+  
+  console.log('[v0] Chat API called - obraId:', obraId)
+  console.log('[v0] Sectores count:', sectores?.length || 0)
+  console.log('[v0] Rubros count:', rubros?.length || 0)
+  console.log('[v0] Messages count:', messages?.length || 0)
 
   const supabase = await createClient()
   

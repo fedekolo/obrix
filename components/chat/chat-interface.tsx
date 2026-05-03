@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useEffect, useState } from 'react'
+import { useRef, useEffect, useState, useMemo } from 'react'
 import { useChat } from '@ai-sdk/react'
 import { DefaultChatTransport } from 'ai'
 import { Send, Mic, MicOff, ImagePlus, Loader2 } from 'lucide-react'
@@ -28,14 +28,32 @@ export function ChatInterface({ obraId, sectores, rubros, userId }: ChatInterfac
 
   const [inputValue, setInputValue] = useState('')
   
-  const { messages, sendMessage, status } = useChat({
-    transport: new DefaultChatTransport({
-      api: '/api/chat',
-      body: { obraId, sectores, rubros },
+  // Memoize transport to prevent recreation on every render
+  const transport = useMemo(() => new DefaultChatTransport({
+    api: '/api/chat',
+    prepareSendMessagesRequest: ({ id, messages }) => ({
+      body: {
+        id,
+        messages,
+        obraId,
+        sectores,
+        rubros,
+      },
     }),
-  })
+  }), [obraId, sectores, rubros])
+
+  const { messages, sendMessage, status } = useChat({ transport })
 
   const isLoading = status === 'streaming' || status === 'submitted'
+
+  // Debug logs
+  useEffect(() => {
+    console.log('[v0] Chat status:', status)
+    console.log('[v0] Messages count:', messages.length)
+    if (messages.length > 0) {
+      console.log('[v0] Last message:', JSON.stringify(messages[messages.length - 1], null, 2))
+    }
+  }, [status, messages])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -49,15 +67,21 @@ export function ChatInterface({ obraId, sectores, rubros, userId }: ChatInterfac
     setInputValue('')
     setPendingImages([])
 
-    await sendMessage({
-      text: messageContent,
-      ...(pendingImages.length > 0 && {
-        experimental_attachments: pendingImages.map(url => ({
-          contentType: 'image/jpeg',
-          url,
-        })),
-      }),
-    })
+    console.log('[v0] Sending message:', messageContent)
+    try {
+      await sendMessage({
+        text: messageContent,
+        ...(pendingImages.length > 0 && {
+          experimental_attachments: pendingImages.map(url => ({
+            contentType: 'image/jpeg',
+            url,
+          })),
+        }),
+      })
+      console.log('[v0] Message sent successfully')
+    } catch (err) {
+      console.error('[v0] Error sending message:', err)
+    }
   }
 
   const startRecording = async () => {
