@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { AppSidebar } from '@/components/layout/app-sidebar'
+import { SidebarProvider, SidebarInset } from '@/components/ui/sidebar'
 
 export default async function InvitacionesLayout({ children }: { children: React.ReactNode }) {
   const supabase = await createClient()
@@ -8,11 +9,11 @@ export default async function InvitacionesLayout({ children }: { children: React
   if (!user) redirect('/auth/login')
 
   return (
-    <div className="flex h-screen overflow-hidden bg-background">
+    <SidebarProvider>
       <AppSidebar user={user} />
-      <main className="flex-1 overflow-auto">
+      <SidebarInset>
         {children}
-      </main>
-    </div>
+      </SidebarInset>
+    </SidebarProvider>
   )
 }

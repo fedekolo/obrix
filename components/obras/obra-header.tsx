@@ -10,10 +10,10 @@ import type { Obra } from '@/lib/types'
 
 interface ObraHeaderProps {
   obra: Obra
-  isOwner: boolean
+  esPropietario: boolean
 }
 
-export function ObraHeader({ obra, isOwner }: ObraHeaderProps) {
+export function ObraHeader({ obra, esPropietario }: ObraHeaderProps) {
   return (
     <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4 bg-card">
       <SidebarTrigger className="-ml-1" />
@@ -23,8 +23,8 @@ export function ObraHeader({ obra, isOwner }: ObraHeaderProps) {
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <h1 className="text-base font-semibold truncate">{obra.nombre}</h1>
-              <Badge variant={isOwner ? 'default' : 'secondary'} className="shrink-0 text-xs">
-                {isOwner ? 'Propietario' : 'Colaborador'}
+              <Badge variant={esPropietario ? 'default' : 'secondary'} className="shrink-0 text-xs">
+                {esPropietario ? 'Propietario' : 'Colaborador'}
               </Badge>
             </div>
             {obra.direccion && (

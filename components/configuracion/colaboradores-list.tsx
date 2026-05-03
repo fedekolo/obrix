@@ -24,6 +24,7 @@ import type { ObraColaborador } from '@/lib/types'
 interface ColaboradoresListProps {
   obraId: string
   initialColaboradores: ObraColaborador[]
+  currentUserEmail: string
 }
 
 const estadoConfig = {
@@ -32,7 +33,7 @@ const estadoConfig = {
   rechazada: { label: 'Rechazada', icon: XCircle, variant: 'destructive' as const },
 }
 
-export function ColaboradoresList({ obraId, initialColaboradores }: ColaboradoresListProps) {
+export function ColaboradoresList({ obraId, initialColaboradores, currentUserEmail }: ColaboradoresListProps) {
   const [colaboradores, setColaboradores] = useState(initialColaboradores)
   const [email, setEmail] = useState('')
   const [rol, setRol] = useState<'editor' | 'viewer'>('editor')

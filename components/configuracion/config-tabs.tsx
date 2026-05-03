@@ -11,7 +11,8 @@ interface ConfigTabsProps {
   sectores: Sector[]
   rubros: Rubro[]
   colaboradores: ObraColaborador[]
-  isOwner: boolean
+  esPropietario: boolean
+  currentUserEmail: string
 }
 
 export function ConfigTabs({
@@ -19,14 +20,15 @@ export function ConfigTabs({
   sectores,
   rubros,
   colaboradores,
-  isOwner,
+  esPropietario,
+  currentUserEmail,
 }: ConfigTabsProps) {
   return (
     <Tabs defaultValue="sectores" className="space-y-4">
       <TabsList>
         <TabsTrigger value="sectores">Sectores</TabsTrigger>
         <TabsTrigger value="rubros">Rubros</TabsTrigger>
-        {isOwner && <TabsTrigger value="colaboradores">Colaboradores</TabsTrigger>}
+        {esPropietario && <TabsTrigger value="colaboradores">Colaboradores</TabsTrigger>}
       </TabsList>
       
       <TabsContent value="sectores" className="space-y-4">
@@ -37,9 +39,9 @@ export function ConfigTabs({
         <RubrosList obraId={obraId} initialRubros={rubros} />
       </TabsContent>
       
-      {isOwner && (
+      {esPropietario && (
         <TabsContent value="colaboradores" className="space-y-4">
-          <ColaboradoresList obraId={obraId} initialColaboradores={colaboradores} />
+          <ColaboradoresList obraId={obraId} initialColaboradores={colaboradores} currentUserEmail={currentUserEmail} />
         </TabsContent>
       )}
     </Tabs>

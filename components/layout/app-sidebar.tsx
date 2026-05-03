@@ -115,11 +115,11 @@ export function AppSidebar({ user }: AppSidebarProps) {
                 </div>
                 <div className="flex flex-col gap-0.5 leading-none">
                   <span className="font-semibold">Avance de Obra</span>
-                  <span className="text-xs text-sidebar-foreground/70">Gestión de construcción</span>
+                  <span className="text-xs text-sidebar-foreground/70">Gestion de construccion</span>
                 </div>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          </Link>
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
         </SidebarMenu>
       </SidebarHeader>
       
