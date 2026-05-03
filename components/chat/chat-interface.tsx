@@ -26,7 +26,9 @@ export function ChatInterface({ obraId, sectores, rubros, userId }: ChatInterfac
   const fileInputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
-  const { messages, sendMessage, status, input, setInput } = useChat({
+  const [inputValue, setInputValue] = useState('')
+  
+  const { messages, sendMessage, status } = useChat({
     transport: new DefaultChatTransport({
       api: '/api/chat',
       body: { obraId, sectores, rubros },
@@ -41,10 +43,10 @@ export function ChatInterface({ obraId, sectores, rubros, userId }: ChatInterfac
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!input.trim() && pendingImages.length === 0) return
+    if (!inputValue.trim() && pendingImages.length === 0) return
 
-    const messageContent = input.trim()
-    setInput('')
+    const messageContent = inputValue.trim()
+    setInputValue('')
     setPendingImages([])
 
     await sendMessage({
@@ -102,7 +104,7 @@ export function ChatInterface({ obraId, sectores, rubros, userId }: ChatInterfac
 
       if (res.ok) {
         const { text } = await res.json()
-        setInput((prev) => (prev ? `${prev} ${text}` : text))
+        setInputValue((prev) => (prev ? `${prev} ${text}` : text))
         textareaRef.current?.focus()
       }
     } catch (err) {
@@ -226,8 +228,8 @@ export function ChatInterface({ obraId, sectores, rubros, userId }: ChatInterfac
           </Button>
           <Textarea
             ref={textareaRef}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
+            value={inputValue}
+            onChange={(e) => setInputValue(e.target.value)}
             placeholder="Escribe un mensaje o usa el microfono..."
             className="min-h-[44px] max-h-32 resize-none flex-1"
             rows={1}
@@ -239,7 +241,7 @@ export function ChatInterface({ obraId, sectores, rubros, userId }: ChatInterfac
             }}
             disabled={isLoading}
           />
-          <Button type="submit" disabled={isLoading || (!input.trim() && pendingImages.length === 0)}>
+          <Button type="submit" disabled={isLoading || (!inputValue.trim() && pendingImages.length === 0)}>
             {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
           </Button>
         </div>
