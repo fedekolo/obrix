@@ -51,20 +51,32 @@ export function SectoresList({ obraId, initialSectores }: SectoresListProps) {
     if (!nombre.trim()) return
     setLoading(true)
 
+    // Parse multiple sectors separated by comma
+    const nombres = nombre
+      .split(',')
+      .map(n => n.trim())
+      .filter(n => n.length > 0)
+
+    if (nombres.length === 0) {
+      setLoading(false)
+      return
+    }
+
     const supabase = createClient()
+    const toInsert = nombres.map((n, i) => ({
+      obra_id: obraId,
+      nombre: n,
+      tipo,
+      orden: sectores.length + i,
+    }))
+
     const { data, error } = await supabase
       .from('sectores')
-      .insert({
-        obra_id: obraId,
-        nombre: nombre.trim(),
-        tipo,
-        orden: sectores.length,
-      })
+      .insert(toInsert)
       .select()
-      .single()
 
     if (!error && data) {
-      setSectores([...sectores, data])
+      setSectores([...sectores, ...data])
       setNombre('')
       setTipo('unidad_funcional')
       setOpen(false)
@@ -107,20 +119,23 @@ export function SectoresList({ obraId, initialSectores }: SectoresListProps) {
             </DialogTrigger>
             <DialogContent>
               <DialogHeader>
-                <DialogTitle>Nuevo Sector</DialogTitle>
+                <DialogTitle>Agregar Sectores</DialogTitle>
                 <DialogDescription>
-                  Agrega un nuevo sector a la obra
+                  Agrega uno o varios sectores a la obra
                 </DialogDescription>
               </DialogHeader>
               <div className="space-y-4 py-4">
                 <div className="space-y-2">
-                  <Label htmlFor="nombre">Nombre</Label>
+                  <Label htmlFor="nombre">Nombre(s)</Label>
                   <Input
                     id="nombre"
-                    placeholder="Ej: UF 1, Hall PB, Terraza"
+                    placeholder="Ej: UF 501, UF 502, UF 503"
                     value={nombre}
                     onChange={(e) => setNombre(e.target.value)}
                   />
+                  <p className="text-xs text-muted-foreground">
+                    Para cargar varios sectores, separalos por coma. Ej: UF 501, UF 502, UF 503
+                  </p>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="tipo">Tipo</Label>

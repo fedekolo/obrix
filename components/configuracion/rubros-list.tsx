@@ -2,8 +2,9 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Plus, Trash2, Loader2, Wrench, ChevronDown, ChevronRight } from 'lucide-react'
+import { Plus, Trash2, Loader2, Wrench, ChevronDown, ChevronRight, Download } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
+import { DEFAULT_RUBROS_TAREAS } from '@/lib/default-rubros'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -45,6 +46,7 @@ export function RubrosList({ obraId, initialRubros, initialTareas }: RubrosListP
   const [nombreTarea, setNombreTarea] = useState('')
   const [addingTarea, setAddingTarea] = useState(false)
   const [expandedRubros, setExpandedRubros] = useState<Set<string>>(new Set())
+  const [loadingDefaults, setLoadingDefaults] = useState(false)
   const router = useRouter()
 
   const toggleRubro = (id: string) => {
@@ -141,6 +143,68 @@ export function RubrosList({ obraId, initialRubros, initialTareas }: RubrosListP
     router.refresh()
   }
 
+  const handleLoadDefaults = async () => {
+    setLoadingDefaults(true)
+    const supabase = createClient()
+
+    try {
+      // Insert all rubros first
+      const rubrosToInsert = DEFAULT_RUBROS_TAREAS.map((r, i) => ({
+        obra_id: obraId,
+        nombre: r.nombre,
+        orden: rubros.length + i,
+      }))
+
+      const { data: newRubros, error: rubrosError } = await supabase
+        .from('rubros')
+        .insert(rubrosToInsert)
+        .select()
+
+      if (rubrosError || !newRubros) {
+        console.error('Error inserting rubros:', rubrosError)
+        setLoadingDefaults(false)
+        return
+      }
+
+      // Now insert tareas for each rubro
+      const tareasToInsert: { rubro_id: string; nombre: string; orden: number }[] = []
+      
+      DEFAULT_RUBROS_TAREAS.forEach((defaultRubro, index) => {
+        const insertedRubro = newRubros[index]
+        if (insertedRubro) {
+          defaultRubro.tareas.forEach((tareaNombre, tareaIndex) => {
+            tareasToInsert.push({
+              rubro_id: insertedRubro.id,
+              nombre: tareaNombre,
+              orden: tareaIndex,
+            })
+          })
+        }
+      })
+
+      const { data: newTareas, error: tareasError } = await supabase
+        .from('tareas')
+        .insert(tareasToInsert)
+        .select()
+
+      if (tareasError) {
+        console.error('Error inserting tareas:', tareasError)
+      }
+
+      // Update local state
+      setRubros([...rubros, ...newRubros])
+      if (newTareas) {
+        setTareas([...tareas, ...newTareas])
+      }
+      
+      router.refresh()
+    } catch (err) {
+      console.error('Error loading defaults:', err)
+    }
+
+    setLoadingDefaults(false)
+  }
+
   return (
     <Card>
       <CardHeader>
@@ -200,9 +264,33 @@ export function RubrosList({ obraId, initialRubros, initialTareas }: RubrosListP
       </CardHeader>
       <CardContent>
         {rubros.length === 0 ? (
-          <p className="text-sm text-muted-foreground text-center py-8">
-            No hay rubros definidos. Agrega el primer rubro para comenzar.
-          </p>
+          <div className="text-center py-8 space-y-4">
+            <p className="text-sm text-muted-foreground">
+              No hay rubros definidos.
+            </p>
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-2">
+              <Button 
+                variant="outline" 
+                onClick={handleLoadDefaults}
+                disabled={loadingDefaults}
+              >
+                {loadingDefaults ? (
+                  <Loader2 className="size-4 mr-2 animate-spin" />
+                ) : (
+                  <Download className="size-4 mr-2" />
+                )}
+                Cargar rubros predefinidos
+              </Button>
+              <span className="text-xs text-muted-foreground">o</span>
+              <Button size="sm" onClick={() => setOpen(true)}>
+                <Plus className="size-4 mr-2" />
+                Crear rubro personalizado
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground max-w-md mx-auto">
+              Los rubros predefinidos incluyen categorías comunes de construcción como Electricidad, Pintura, Carpinterías, etc. con sus tareas correspondientes.
+            </p>
+          </div>
         ) : (
           <div className="space-y-2">
             {rubros.map((rubro) => {
