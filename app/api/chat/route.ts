@@ -159,7 +159,7 @@ Responde en espanol, conciso y directo.`
 
           return {
             success: true,
-            message: `Registrado: ${tarea.nombre} en ${sector.nombre}.`,
+            message: `Registrado en ${sector.nombre}:\nRubro: ${rubro?.nombre || 'Sin rubro'}\nTarea: ${tarea.nombre}`,
             avance: { id: data.id, tarea: tarea.nombre, rubro: rubro?.nombre, sector: sector.nombre },
           }
         },
