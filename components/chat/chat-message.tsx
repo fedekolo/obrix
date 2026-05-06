@@ -25,7 +25,10 @@ interface ToolPart {
     success?: boolean
     message?: string
     count?: number
-    avances?: Array<{ fecha: string; sector: string; rubro: string; descripcion: string }>
+    avance?: { id: string; tarea: string; rubro?: string; sector: string }
+    tarea?: { id: string; nombre: string; rubro_id: string }
+    avances?: Array<{ fecha: string; sector?: string; tarea?: string; rubro?: string; descripcion: string }>
+    historial?: Array<{ fecha: string; descripcion: string; estado: string }>
     sectores?: Array<{ id: string; nombre: string; tipo: string }>
     rubros?: Array<{ id: string; nombre: string }>
   }
@@ -48,7 +51,7 @@ function ToolCallDisplay({ tool }: { tool: ToolPart }) {
     return (
       <div className="flex items-center gap-2 text-sm text-muted-foreground bg-muted/50 rounded-lg px-3 py-2">
         <Loader2 className="h-4 w-4 animate-spin" />
-        <span>Procesando {toolName === 'registrarAvances' ? 'registro...' : 'consulta...'}</span>
+        <span>Procesando...</span>
       </div>
     )
   }
@@ -57,31 +60,37 @@ function ToolCallDisplay({ tool }: { tool: ToolPart }) {
     return (
       <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 rounded-lg px-3 py-2">
         <XCircle className="h-4 w-4" />
-        <span>Error al procesar la solicitud</span>
+        <span>Error al procesar</span>
       </div>
     )
   }
 
-  // Show tool result
-  if (toolName === 'registrarAvances') {
+  // registrarAvance - single avance registered
+  if (toolName === 'registrarAvance' && output.avance) {
     return (
-      <div className={cn(
-        'rounded-lg px-3 py-2 text-sm',
-        output.success ? 'bg-green-500/10 text-green-700 dark:text-green-400' : 'bg-muted'
-      )}>
-        <div className="flex items-center gap-2">
-          {output.success ? <CheckCircle2 className="h-4 w-4" /> : null}
-          <span>{output.message}</span>
-        </div>
+      <div className="flex items-center gap-2 text-sm bg-green-500/10 text-green-700 dark:text-green-400 rounded-lg px-3 py-2">
+        <CheckCircle2 className="h-4 w-4" />
+        <span>{output.message}</span>
       </div>
     )
   }
 
+  // crearTarea - new task created
+  if (toolName === 'crearTarea' && output.tarea) {
+    return (
+      <div className="flex items-center gap-2 text-sm bg-blue-500/10 text-blue-700 dark:text-blue-400 rounded-lg px-3 py-2">
+        <CheckCircle2 className="h-4 w-4" />
+        <span>{output.message}</span>
+      </div>
+    )
+  }
+
+  // consultarAvances - list of active avances
   if (toolName === 'consultarAvances' && output.avances) {
     if (output.avances.length === 0) {
       return (
         <div className="bg-muted rounded-lg px-3 py-2 text-sm">
-          No se encontraron avances.
+          No hay avances registrados.
         </div>
       )
     }
@@ -89,23 +98,49 @@ function ToolCallDisplay({ tool }: { tool: ToolPart }) {
       <div className="bg-muted rounded-lg px-3 py-2 text-sm space-y-2">
         <div className="font-medium">{output.message}</div>
         <div className="space-y-1">
-          {output.avances.slice(0, 10).map((a, i) => (
+          {output.avances.slice(0, 15).map((a, i) => (
             <div key={i} className="text-xs border-l-2 border-primary/30 pl-2">
-              <span className="text-muted-foreground">{a.fecha}</span> - <span className="font-medium">{a.sector}</span> / {a.rubro}: {a.descripcion}
+              <span className="text-muted-foreground">{a.fecha}</span> - <span className="font-medium">{a.sector}</span> / {a.tarea || a.rubro}: {a.descripcion}
             </div>
           ))}
-          {output.avances.length > 10 && (
-            <div className="text-xs text-muted-foreground">...y {output.avances.length - 10} mas</div>
-          )}
         </div>
       </div>
     )
   }
 
+  // consultarHistorial - history of a task+sector
+  if (toolName === 'consultarHistorial' && output.historial) {
+    if (output.historial.length === 0) {
+      return (
+        <div className="bg-muted rounded-lg px-3 py-2 text-sm">
+          No hay historial.
+        </div>
+      )
+    }
+    return (
+      <div className="bg-muted rounded-lg px-3 py-2 text-sm space-y-2">
+        <div className="font-medium">{output.message}</div>
+        <div className="space-y-1">
+          {output.historial.map((h, i) => (
+            <div key={i} className={cn(
+              "text-xs border-l-2 pl-2",
+              h.estado === 'actual' ? 'border-green-500' : 'border-muted-foreground/30'
+            )}>
+              <span className="text-muted-foreground">{h.fecha}</span>
+              {h.estado === 'archivado' && <span className="text-muted-foreground"> (archivado)</span>}
+              : {h.descripcion}
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  // listarSectores
   if (toolName === 'listarSectores' && output.sectores) {
     return (
       <div className="bg-muted rounded-lg px-3 py-2 text-sm">
-        <div className="font-medium mb-1">Sectores disponibles:</div>
+        <div className="font-medium mb-1">Sectores:</div>
         <ul className="space-y-0.5">
           {output.sectores.map((s) => (
             <li key={s.id} className="text-xs">- {s.nombre} ({s.tipo})</li>
@@ -115,10 +150,11 @@ function ToolCallDisplay({ tool }: { tool: ToolPart }) {
     )
   }
 
+  // listarRubros
   if (toolName === 'listarRubros' && output.rubros) {
     return (
       <div className="bg-muted rounded-lg px-3 py-2 text-sm">
-        <div className="font-medium mb-1">Rubros disponibles:</div>
+        <div className="font-medium mb-1">Rubros:</div>
         <ul className="space-y-0.5">
           {output.rubros.map((r) => (
             <li key={r.id} className="text-xs">- {r.nombre}</li>
@@ -128,12 +164,20 @@ function ToolCallDisplay({ tool }: { tool: ToolPart }) {
     )
   }
 
-  // Fallback for other tools
-  return (
-    <div className="bg-muted rounded-lg px-3 py-2 text-sm">
-      {output.message || 'Operacion completada'}
-    </div>
-  )
+  // Fallback - show message if available
+  if (output.message) {
+    return (
+      <div className={cn(
+        'rounded-lg px-3 py-2 text-sm',
+        output.success ? 'bg-green-500/10 text-green-700 dark:text-green-400' : 'bg-muted'
+      )}>
+        {output.success && <CheckCircle2 className="h-4 w-4 inline mr-2" />}
+        {output.message}
+      </div>
+    )
+  }
+
+  return null
 }
 
 export function ChatMessage({ message }: ChatMessageProps) {

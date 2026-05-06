@@ -73,39 +73,39 @@ export async function POST(req: Request) {
 
   const systemPrompt = `Eres un asistente de obra que registra avances de construccion. Obra: "${obra.nombre}".
 
-SECTORES (usa estos IDs):
+SECTORES:
 ${sectoresList}
 
-RUBROS Y TAREAS (usa estos IDs):
+RUBROS Y TAREAS:
 ${rubrosList}
 
-TOLERANCIA SEMANTICA - Interpreta terminos similares:
-- "luces", "lamparas", "luminarias" → Iluminacion
-- "tomas", "enchufes", "tomacorrientes" → Electricidad
-- "canillas", "griferia", "llaves de paso" → Sanitarios
-- "puertas", "ventanas", "aberturas" → Carpinteria
-- "baldosas", "ceramicos", "porcelanato" → Pisos
-- "yeso", "revoque", "enlucido" → Revestimientos
-- Usa el contexto para inferir el rubro correcto
+TOLERANCIA SEMANTICA - Interpreta sinonimos:
+- "luces/lamparas/luminarias" → busca tarea de iluminacion
+- "tomas/enchufes" → busca tarea de electricidad
+- "canillas/griferia" → busca tarea de sanitarios
+- "baldosas/ceramicos/porcelanato" → busca tarea de pisos
 
-REGLAS:
+REGLAS CRITICAS:
 
-1. SI ENTIENDES el rubro/tarea y sector:
-   - Registra DIRECTAMENTE con registrarAvances
-   - Responde: "Registrado: [tarea/rubro] en [sector]."
-   - Si hay tarea especifica, usa tarea_id; si no, solo rubro_id
+1. TODOS los avances DEBEN asociarse a una TAREA existente:
+   - Si identificas la tarea exacta → usa registrarAvance con tarea_id
+   - Si NO encuentras tarea pero si rubro → sugiere la tarea mas cercana O pregunta si quiere crear una nueva tarea
+   - Si el usuario acepta crear tarea → usa crearTarea y luego registrarAvance
 
-2. SI NO RECONOCES el termino:
-   - PREGUNTA: "No reconozco [termino]. ¿Es [opcion1], [opcion2], u otro?"
-   - Espera respuesta antes de registrar
+2. SOLO UN AVANCE ACTIVO por tarea+sector:
+   - Al registrar un avance, los avances anteriores de esa tarea+sector se archivan automaticamente
+   - Al consultar avances, solo muestras el ultimo (activo)
+   - Solo si el usuario pide "historial" o "avances anteriores" usas consultarHistorial
 
-3. MULTIPLES REGISTROS en un mensaje:
-   - "pintura en 501, 502 y 503" → 3 registros
-   - "termine electricidad y pintura en hall" → 2 registros
-   - "en la 510 hice pisos, pintura y luces" → 3 registros
+3. SI NO RECONOCES el termino:
+   - Sugiere la opcion mas cercana: "No encontre tarea para 'X'. ¿Sera [tarea cercana]? O puedo crear una nueva tarea en [rubro]."
 
-4. RANGOS:
-   - "UF 1 a 5" o "501 al 505" → registra en cada unidad del rango
+4. MULTIPLES REGISTROS:
+   - "pintura en 501, 502 y 503" → 3 registros (uno por sector)
+   - "en la 510 hice pisos y pintura" → 2 registros (uno por tarea)
+
+5. RANGOS:
+   - "UF 1 a 5" → registra en cada unidad del rango
 
 Responde en espanol, conciso y directo.`
 
@@ -114,99 +114,110 @@ Responde en espanol, conciso y directo.`
     system: systemPrompt,
     messages: await convertToModelMessages(messages),
     tools: {
-      registrarAvances: tool({
-        description: 'Registra avances de obra. Usa cuando entiendas claramente sector y rubro/tarea.',
+      registrarAvance: tool({
+        description: 'Registra UN avance de obra. REQUIERE tarea_id. Archiva automaticamente avances anteriores de la misma tarea+sector.',
         inputSchema: z.object({
-          avances: z.array(z.object({
-            sector_id: z.string().describe('ID del sector'),
-            rubro_id: z.string().describe('ID del rubro'),
-            tarea_id: z.string().optional().describe('ID de la tarea especifica (opcional)'),
-            descripcion: z.string().describe('Descripcion breve del avance'),
-          })).describe('Lista de avances'),
+          sector_id: z.string().describe('ID del sector'),
+          tarea_id: z.string().describe('ID de la tarea (OBLIGATORIO)'),
+          descripcion: z.string().describe('Descripcion del avance'),
         }),
-        execute: async ({ avances }) => {
-          // Build summary for response
-          const resumen = avances.map((a) => {
-            const sector = sectores.find((s) => s.id === a.sector_id)
-            const rubro = rubros.find((r) => r.id === a.rubro_id)
-            const tarea = a.tarea_id ? tareas?.find((t) => t.id === a.tarea_id) : null
-            const trabajo = tarea ? `${tarea.nombre} (${rubro?.nombre})` : rubro?.nombre || 'Trabajo'
-            return `${trabajo} en ${sector?.nombre || 'Sector'}`
-          })
+        execute: async ({ sector_id, tarea_id, descripcion }) => {
+          const sector = sectores.find((s) => s.id === sector_id)
+          const tarea = tareas?.find((t) => t.id === tarea_id)
+          const rubro = tarea ? rubros.find((r) => r.id === tarea.rubro_id) : null
 
-          // Insert all avances
+          if (!sector || !tarea) {
+            return { success: false, message: 'Sector o tarea no encontrados.' }
+          }
+
+          // Archive existing avances for this tarea+sector
+          await supabase
+            .from('avances')
+            .update({ archivado: true })
+            .eq('tarea_id', tarea_id)
+            .eq('sector_id', sector_id)
+            .eq('archivado', false)
+
+          // Insert new avance
           const { data, error } = await supabase
             .from('avances')
-            .insert(
-              avances.map((a) => ({
-                obra_id: obraId,
-                sector_id: a.sector_id,
-                rubro_id: a.rubro_id,
-                tarea_id: a.tarea_id || null,
-                user_id: user.id,
-                descripcion: a.descripcion,
-              }))
-            )
+            .insert({
+              obra_id: obraId,
+              sector_id,
+              rubro_id: tarea.rubro_id,
+              tarea_id,
+              user_id: user.id,
+              descripcion,
+              archivado: false,
+            })
             .select()
-
-          if (error) {
-            return { success: false, message: `Error al guardar: ${error.message}` }
-          }
-
-          return {
-            success: true,
-            message: data.length === 1 
-              ? `Registrado: ${resumen[0]}.`
-              : `Registrados ${data.length} avances: ${resumen.join(', ')}.`,
-            count: data.length,
-          }
-        },
-      }),
-
-      consultarAvances: tool({
-        description: 'Consulta avances registrados con filtros opcionales',
-        inputSchema: z.object({
-          sector_ids: z.array(z.string()).optional().describe('IDs de sectores'),
-          rubro_ids: z.array(z.string()).optional().describe('IDs de rubros'),
-          fecha_desde: z.string().optional().describe('Fecha desde (YYYY-MM-DD)'),
-          fecha_hasta: z.string().optional().describe('Fecha hasta (YYYY-MM-DD)'),
-          limite: z.number().optional().default(20).describe('Max resultados'),
-        }),
-        execute: async ({ sector_ids, rubro_ids, fecha_desde, fecha_hasta, limite }) => {
-          let query = supabase
-            .from('avances')
-            .select(`
-              *,
-              sectores (nombre, tipo),
-              rubros (nombre),
-              tareas (nombre)
-            `)
-            .eq('obra_id', obraId)
-            .order('created_at', { ascending: false })
-            .limit(limite || 20)
-
-          if (sector_ids && sector_ids.length > 0) {
-            query = query.in('sector_id', sector_ids)
-          }
-          if (rubro_ids && rubro_ids.length > 0) {
-            query = query.in('rubro_id', rubro_ids)
-          }
-          if (fecha_desde) {
-            query = query.gte('created_at', fecha_desde)
-          }
-          if (fecha_hasta) {
-            query = query.lte('created_at', `${fecha_hasta}T23:59:59`)
-          }
-
-          const { data, error } = await query
+            .single()
 
           if (error) {
             return { success: false, message: `Error: ${error.message}` }
           }
 
-          if (!data || data.length === 0) {
-            return { success: true, message: 'No se encontraron avances.', avances: [] }
+          return {
+            success: true,
+            message: `Registrado: ${tarea.nombre} en ${sector.nombre}.`,
+            avance: { id: data.id, tarea: tarea.nombre, rubro: rubro?.nombre, sector: sector.nombre },
           }
+        },
+      }),
+
+      crearTarea: tool({
+        description: 'Crea una nueva tarea en un rubro. Usa cuando el usuario acepta crear una tarea que no existe.',
+        inputSchema: z.object({
+          rubro_id: z.string().describe('ID del rubro donde crear la tarea'),
+          nombre: z.string().describe('Nombre de la nueva tarea'),
+        }),
+        execute: async ({ rubro_id, nombre }) => {
+          const rubro = rubros.find((r) => r.id === rubro_id)
+          if (!rubro) {
+            return { success: false, message: 'Rubro no encontrado.' }
+          }
+
+          const { data, error } = await supabase
+            .from('tareas')
+            .insert({ rubro_id, nombre, orden: 0 })
+            .select()
+            .single()
+
+          if (error) {
+            return { success: false, message: `Error: ${error.message}` }
+          }
+
+          // Add to local tareas array for immediate use
+          tareas.push(data)
+
+          return {
+            success: true,
+            message: `Tarea "${nombre}" creada en ${rubro.nombre}.`,
+            tarea: { id: data.id, nombre: data.nombre, rubro_id },
+          }
+        },
+      }),
+
+      consultarAvances: tool({
+        description: 'Consulta los avances ACTIVOS (no archivados). Muestra solo el ultimo avance de cada tarea+sector.',
+        inputSchema: z.object({
+          sector_ids: z.array(z.string()).optional().describe('Filtrar por sectores'),
+          tarea_ids: z.array(z.string()).optional().describe('Filtrar por tareas'),
+        }),
+        execute: async ({ sector_ids, tarea_ids }) => {
+          let query = supabase
+            .from('avances')
+            .select(`*, sectores (nombre), rubros (nombre), tareas (nombre)`)
+            .eq('obra_id', obraId)
+            .eq('archivado', false)
+            .order('created_at', { ascending: false })
+
+          if (sector_ids?.length) query = query.in('sector_id', sector_ids)
+          if (tarea_ids?.length) query = query.in('tarea_id', tarea_ids)
+
+          const { data, error } = await query
+          if (error) return { success: false, message: `Error: ${error.message}` }
+          if (!data?.length) return { success: true, message: 'No hay avances registrados.', avances: [] }
 
           interface AvanceRow {
             created_at: string
@@ -216,18 +227,55 @@ Responde en espanol, conciso y directo.`
             tareas?: { nombre: string } | null
           }
 
-          const formatted = (data as AvanceRow[]).map((a) => ({
-            fecha: new Date(a.created_at).toLocaleDateString('es-AR'),
-            sector: a.sectores?.nombre || 'Desconocido',
-            rubro: a.rubros?.nombre || 'Desconocido',
-            tarea: a.tareas?.nombre || null,
-            descripcion: a.descripcion,
-          }))
+          return {
+            success: true,
+            message: `${data.length} avance(s) activo(s).`,
+            avances: (data as AvanceRow[]).map((a) => ({
+              fecha: new Date(a.created_at).toLocaleDateString('es-AR'),
+              sector: a.sectores?.nombre,
+              tarea: a.tareas?.nombre,
+              rubro: a.rubros?.nombre,
+              descripcion: a.descripcion,
+            })),
+          }
+        },
+      }),
+
+      consultarHistorial: tool({
+        description: 'Consulta el HISTORIAL completo de una tarea+sector, incluyendo avances archivados. Usa solo cuando el usuario pida explicitamente "historial" o "avances anteriores".',
+        inputSchema: z.object({
+          sector_id: z.string().describe('ID del sector'),
+          tarea_id: z.string().describe('ID de la tarea'),
+        }),
+        execute: async ({ sector_id, tarea_id }) => {
+          const { data, error } = await supabase
+            .from('avances')
+            .select(`*, sectores (nombre), tareas (nombre)`)
+            .eq('obra_id', obraId)
+            .eq('sector_id', sector_id)
+            .eq('tarea_id', tarea_id)
+            .order('created_at', { ascending: false })
+
+          if (error) return { success: false, message: `Error: ${error.message}` }
+          if (!data?.length) return { success: true, message: 'No hay historial.', historial: [] }
+
+          const sector = sectores.find(s => s.id === sector_id)
+          const tarea = tareas?.find(t => t.id === tarea_id)
+
+          interface AvanceRow {
+            created_at: string
+            descripcion: string
+            archivado: boolean
+          }
 
           return {
             success: true,
-            message: `${data.length} avance(s) encontrado(s).`,
-            avances: formatted,
+            message: `Historial de ${tarea?.nombre} en ${sector?.nombre}:`,
+            historial: (data as AvanceRow[]).map((a) => ({
+              fecha: new Date(a.created_at).toLocaleDateString('es-AR'),
+              descripcion: a.descripcion,
+              estado: a.archivado ? 'archivado' : 'actual',
+            })),
           }
         },
       }),

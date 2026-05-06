@@ -43,9 +43,10 @@ export interface Avance {
   obra_id: string
   sector_id: string
   rubro_id: string
-  tarea_id: string | null
+  tarea_id: string
   user_id: string
   descripcion: string
+  archivado: boolean
   created_at: string
   sector?: Sector
   rubro?: Rubro
