@@ -4,12 +4,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { SectoresList } from './sectores-list'
 import { RubrosList } from './rubros-list'
 import { ColaboradoresList } from './colaboradores-list'
-import type { Sector, Rubro, ObraColaborador } from '@/lib/types'
+import type { Sector, Rubro, Tarea, ObraColaborador } from '@/lib/types'
 
 interface ConfigTabsProps {
   obraId: string
   sectores: Sector[]
   rubros: Rubro[]
+  tareas: Tarea[]
   colaboradores: ObraColaborador[]
   esPropietario: boolean
   currentUserEmail: string
@@ -19,6 +20,7 @@ export function ConfigTabs({
   obraId,
   sectores,
   rubros,
+  tareas,
   colaboradores,
   esPropietario,
   currentUserEmail,
@@ -36,7 +38,7 @@ export function ConfigTabs({
       </TabsContent>
       
       <TabsContent value="rubros" className="space-y-4">
-        <RubrosList obraId={obraId} initialRubros={rubros} />
+        <RubrosList obraId={obraId} initialRubros={rubros} initialTareas={tareas} />
       </TabsContent>
       
       {esPropietario && (

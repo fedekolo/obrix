@@ -26,10 +26,16 @@ export default async function ConfiguracionPage({ params }: ConfiguracionPagePro
 
   const esPropietario = obra.user_id === user.id
 
-  const [{ data: sectores }, { data: rubros }, { data: colaboradores }] = await Promise.all([
+  // Get rubro IDs first for filtering tareas
+  const { data: rubros } = await supabase.from('rubros').select('*').eq('obra_id', obraId).order('orden')
+  const rubroIds = (rubros || []).map(r => r.id)
+
+  const [{ data: sectores }, { data: colaboradores }, { data: tareas }] = await Promise.all([
     supabase.from('sectores').select('*').eq('obra_id', obraId).order('orden'),
-    supabase.from('rubros').select('*').eq('obra_id', obraId).order('orden'),
     supabase.from('obra_colaboradores').select('*').eq('obra_id', obraId),
+    rubroIds.length > 0 
+      ? supabase.from('tareas').select('*').in('rubro_id', rubroIds).order('orden')
+      : Promise.resolve({ data: [] }),
   ])
 
   return (
@@ -49,6 +55,7 @@ export default async function ConfiguracionPage({ params }: ConfiguracionPagePro
         obraId={obraId}
         sectores={sectores || []}
         rubros={rubros || []}
+        tareas={tareas || []}
         colaboradores={colaboradores || []}
         esPropietario={esPropietario}
         currentUserEmail={user.email || ''}
