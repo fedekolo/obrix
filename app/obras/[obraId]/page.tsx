@@ -37,10 +37,11 @@ export default async function ObraPage({ params }: ObraPageProps) {
   const obraData = obra || null
   const esPropietario = obraData?.user_id === user.id
 
-  // Cargar sectores y rubros para el chat
-  const [{ data: sectores }, { data: rubros }] = await Promise.all([
+  // Cargar sectores, rubros y tareas para el chat
+  const [{ data: sectores }, { data: rubros }, { data: tareas }] = await Promise.all([
     supabase.from('sectores').select('*').eq('obra_id', obraId).order('orden'),
     supabase.from('rubros').select('*').eq('obra_id', obraId).order('orden'),
+    supabase.from('tareas').select('*').order('orden'),
   ])
 
   return (
@@ -54,7 +55,7 @@ export default async function ObraPage({ params }: ObraPageProps) {
           obraId={obraId}
           sectores={sectores || []}
           rubros={rubros || []}
-          userId={user.id}
+          tareas={tareas || []}
         />
       </div>
     </div>

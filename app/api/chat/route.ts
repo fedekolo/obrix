@@ -7,8 +7,33 @@ const groq = createGroq({
   apiKey: process.env.GROQ_API_KEY,
 })
 
+// Type definitions for the request data
+interface SectorData {
+  id: string
+  nombre: string
+  tipo: string
+}
+
+interface TareaData {
+  id: string
+  nombre: string
+  rubro_id: string
+}
+
+interface RubroData {
+  id: string
+  nombre: string
+  tareas?: TareaData[]
+}
+
 export async function POST(req: Request) {
-  const { messages, obraId, sectores, rubros } = await req.json()
+  const { messages, obraId, sectores, rubros, tareas } = await req.json() as {
+    messages: unknown[]
+    obraId: string
+    sectores: SectorData[]
+    rubros: RubroData[]
+    tareas: TareaData[]
+  }
 
   const supabase = await createClient()
   
@@ -30,53 +55,59 @@ export async function POST(req: Request) {
   }
 
   const sectoresList = sectores.length > 0 
-    ? sectores.map((s: { id: string; nombre: string; tipo: string }) => `- ${s.nombre} (ID: ${s.id}, Tipo: ${s.tipo})`).join('\n')
+    ? sectores.map((s) => `- ${s.nombre} (ID: ${s.id}, Tipo: ${s.tipo})`).join('\n')
     : '(No hay sectores configurados. Pide al usuario que los configure primero.)'
+  
+  // Build rubros list with their tareas
+  const rubrosWithTareas = rubros.map((r) => {
+    const rubroTareas = tareas?.filter((t) => t.rubro_id === r.id) || []
+    const tareasStr = rubroTareas.length > 0 
+      ? ` [Tareas: ${rubroTareas.map(t => `${t.nombre} (ID: ${t.id})`).join(', ')}]`
+      : ''
+    return `- ${r.nombre} (ID: ${r.id})${tareasStr}`
+  })
     
   const rubrosList = rubros.length > 0
-    ? rubros.map((r: { id: string; nombre: string }) => `- ${r.nombre} (ID: ${r.id})`).join('\n')
+    ? rubrosWithTareas.join('\n')
     : '(No hay rubros configurados. Pide al usuario que los configure primero.)'
 
-  const systemPrompt = `Eres un asistente especializado en gestión de avance de obra para la construcción.
-Tu objetivo es ayudar a los usuarios a registrar y consultar el progreso de trabajos en una obra llamada "${obra.nombre}".
+  const systemPrompt = `Eres un asistente de obra que registra avances de construccion. Obra: "${obra.nombre}".
 
-INFORMACIÓN DE LA OBRA:
-- Nombre: ${obra.nombre}
-- Dirección: ${obra.direccion || 'No especificada'}
-
-SECTORES DISPONIBLES (usa SOLO estos IDs):
+SECTORES (usa estos IDs):
 ${sectoresList}
 
-RUBROS DISPONIBLES (usa SOLO estos IDs):
+RUBROS Y TAREAS (usa estos IDs):
 ${rubrosList}
+
+TOLERANCIA SEMANTICA - Interpreta terminos similares:
+- "luces", "lamparas", "luminarias" → Iluminacion
+- "tomas", "enchufes", "tomacorrientes" → Electricidad
+- "canillas", "griferia", "llaves de paso" → Sanitarios
+- "puertas", "ventanas", "aberturas" → Carpinteria
+- "baldosas", "ceramicos", "porcelanato" → Pisos
+- "yeso", "revoque", "enlucido" → Revestimientos
+- Usa el contexto para inferir el rubro correcto
 
 REGLAS:
 
-1. SI ENTIENDES CLARAMENTE el rubro y el sector:
-   - Registra el avance DIRECTAMENTE llamando a registrarAvances con confirmar=true
-   - Informa al usuario lo que guardaste, por ejemplo: "Listo, se registro el avance de Pintura en UF 502."
-   - El usuario corregira si hay algun error
+1. SI ENTIENDES el rubro/tarea y sector:
+   - Registra DIRECTAMENTE con registrarAvances
+   - Responde: "Registrado: [tarea/rubro] en [sector]."
+   - Si hay tarea especifica, usa tarea_id; si no, solo rubro_id
 
-2. SI NO RECONOCES el rubro mencionado:
-   - NO registres nada
-   - PREGUNTA: "No reconozco ese rubro. ¿A cual de estos se refiere?" y lista los rubros disponibles
-   - Espera la aclaracion del usuario antes de registrar
+2. SI NO RECONOCES el termino:
+   - PREGUNTA: "No reconozco [termino]. ¿Es [opcion1], [opcion2], u otro?"
+   - Espera respuesta antes de registrar
 
-3. SI NO RECONOCES el sector mencionado:
-   - NO registres nada  
-   - PREGUNTA cual es el sector correcto
-   - Espera la aclaracion del usuario antes de registrar
+3. MULTIPLES REGISTROS en un mensaje:
+   - "pintura en 501, 502 y 503" → 3 registros
+   - "termine electricidad y pintura en hall" → 2 registros
+   - "en la 510 hice pisos, pintura y luces" → 3 registros
 
-4. SOBRE MULTIPLES REGISTROS:
-   - "pintura lista en UF 1, 2 y 3" → registra 3 avances (uno por cada UF)
-   - "termine electricidad y pintura en el hall" → registra 2 avances (uno por cada rubro)
-   - Informa el resumen de todo lo que guardaste
+4. RANGOS:
+   - "UF 1 a 5" o "501 al 505" → registra en cada unidad del rango
 
-5. CONSULTAS:
-   - Cuando el usuario pregunte por avances, usa consultarAvances
-   - Cuando pregunte que sectores o rubros hay, usa listarSectores o listarRubros
-
-Responde SIEMPRE en espanol, se conciso y directo.`
+Responde en espanol, conciso y directo.`
 
   const result = streamText({
     model: groq('llama-3.3-70b-versatile'),
@@ -84,20 +115,23 @@ Responde SIEMPRE en espanol, se conciso y directo.`
     messages: await convertToModelMessages(messages),
     tools: {
       registrarAvances: tool({
-        description: 'Registra uno o mas avances de obra. Usa esta herramienta SOLO cuando entiendas claramente el sector y rubro.',
+        description: 'Registra avances de obra. Usa cuando entiendas claramente sector y rubro/tarea.',
         inputSchema: z.object({
           avances: z.array(z.object({
             sector_id: z.string().describe('ID del sector'),
             rubro_id: z.string().describe('ID del rubro'),
-            descripcion: z.string().describe('Descripcion del avance realizado'),
-          })).describe('Lista de avances a registrar'),
+            tarea_id: z.string().optional().describe('ID de la tarea especifica (opcional)'),
+            descripcion: z.string().describe('Descripcion breve del avance'),
+          })).describe('Lista de avances'),
         }),
         execute: async ({ avances }) => {
           // Build summary for response
           const resumen = avances.map((a) => {
-            const sector = sectores.find((s: { id: string }) => s.id === a.sector_id)
-            const rubro = rubros.find((r: { id: string }) => r.id === a.rubro_id)
-            return `${rubro?.nombre || 'Rubro'} en ${sector?.nombre || 'Sector'}`
+            const sector = sectores.find((s) => s.id === a.sector_id)
+            const rubro = rubros.find((r) => r.id === a.rubro_id)
+            const tarea = a.tarea_id ? tareas?.find((t) => t.id === a.tarea_id) : null
+            const trabajo = tarea ? `${tarea.nombre} (${rubro?.nombre})` : rubro?.nombre || 'Trabajo'
+            return `${trabajo} en ${sector?.nombre || 'Sector'}`
           })
 
           // Insert all avances
@@ -108,6 +142,7 @@ Responde SIEMPRE en espanol, se conciso y directo.`
                 obra_id: obraId,
                 sector_id: a.sector_id,
                 rubro_id: a.rubro_id,
+                tarea_id: a.tarea_id || null,
                 user_id: user.id,
                 descripcion: a.descripcion,
               }))
@@ -122,20 +157,20 @@ Responde SIEMPRE en espanol, se conciso y directo.`
             success: true,
             message: data.length === 1 
               ? `Registrado: ${resumen[0]}.`
-              : `Se registraron ${data.length} avances: ${resumen.join(', ')}.`,
+              : `Registrados ${data.length} avances: ${resumen.join(', ')}.`,
             count: data.length,
           }
         },
       }),
 
       consultarAvances: tool({
-        description: 'Consulta los avances registrados con filtros opcionales',
+        description: 'Consulta avances registrados con filtros opcionales',
         inputSchema: z.object({
-          sector_ids: z.array(z.string()).optional().describe('IDs de sectores a filtrar'),
-          rubro_ids: z.array(z.string()).optional().describe('IDs de rubros a filtrar'),
+          sector_ids: z.array(z.string()).optional().describe('IDs de sectores'),
+          rubro_ids: z.array(z.string()).optional().describe('IDs de rubros'),
           fecha_desde: z.string().optional().describe('Fecha desde (YYYY-MM-DD)'),
           fecha_hasta: z.string().optional().describe('Fecha hasta (YYYY-MM-DD)'),
-          limite: z.number().optional().default(20).describe('Cantidad máxima de resultados'),
+          limite: z.number().optional().default(20).describe('Max resultados'),
         }),
         execute: async ({ sector_ids, rubro_ids, fecha_desde, fecha_hasta, limite }) => {
           let query = supabase
@@ -143,7 +178,8 @@ Responde SIEMPRE en espanol, se conciso y directo.`
             .select(`
               *,
               sectores (nombre, tipo),
-              rubros (nombre)
+              rubros (nombre),
+              tareas (nombre)
             `)
             .eq('obra_id', obraId)
             .order('created_at', { ascending: false })
@@ -165,23 +201,32 @@ Responde SIEMPRE en espanol, se conciso y directo.`
           const { data, error } = await query
 
           if (error) {
-            return { success: false, message: `Error al consultar: ${error.message}` }
+            return { success: false, message: `Error: ${error.message}` }
           }
 
           if (!data || data.length === 0) {
-            return { success: true, message: 'No se encontraron avances con los filtros especificados.', avances: [] }
+            return { success: true, message: 'No se encontraron avances.', avances: [] }
           }
 
-          const formatted = data.map((a) => ({
+          interface AvanceRow {
+            created_at: string
+            descripcion: string
+            sectores?: { nombre: string } | null
+            rubros?: { nombre: string } | null
+            tareas?: { nombre: string } | null
+          }
+
+          const formatted = (data as AvanceRow[]).map((a) => ({
             fecha: new Date(a.created_at).toLocaleDateString('es-AR'),
             sector: a.sectores?.nombre || 'Desconocido',
             rubro: a.rubros?.nombre || 'Desconocido',
+            tarea: a.tareas?.nombre || null,
             descripcion: a.descripcion,
           }))
 
           return {
             success: true,
-            message: `Se encontraron ${data.length} avance(s).`,
+            message: `${data.length} avance(s) encontrado(s).`,
             avances: formatted,
           }
         },

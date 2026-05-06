@@ -7,16 +7,16 @@ import { Send, Mic, MicOff, ImagePlus, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { ChatMessage } from './chat-message'
-import type { Sector, Rubro } from '@/lib/types'
+import type { Sector, Rubro, Tarea } from '@/lib/types'
 
 interface ChatInterfaceProps {
   obraId: string
   sectores: Sector[]
   rubros: Rubro[]
-  userId: string
+  tareas: Tarea[]
 }
 
-export function ChatInterface({ obraId, sectores, rubros, userId }: ChatInterfaceProps) {
+export function ChatInterface({ obraId, sectores, rubros, tareas }: ChatInterfaceProps) {
   const [isRecording, setIsRecording] = useState(false)
   const [isTranscribing, setIsTranscribing] = useState(false)
   const [pendingImages, setPendingImages] = useState<string[]>([])
@@ -38,9 +38,10 @@ export function ChatInterface({ obraId, sectores, rubros, userId }: ChatInterfac
         obraId,
         sectores,
         rubros,
+        tareas,
       },
     }),
-  }), [obraId, sectores, rubros])
+  }), [obraId, sectores, rubros, tareas])
 
   const { messages, sendMessage, status } = useChat({ transport })
 

@@ -2,13 +2,14 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Plus, Trash2, Loader2, Wrench } from 'lucide-react'
+import { Plus, Trash2, Loader2, Wrench, ChevronDown, ChevronRight } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
 import {
   Dialog,
   DialogContent,
@@ -18,21 +19,44 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog'
-import type { Rubro } from '@/lib/types'
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible'
+import type { Rubro, Tarea } from '@/lib/types'
 
 interface RubrosListProps {
   obraId: string
   initialRubros: Rubro[]
+  initialTareas: Tarea[]
 }
 
-export function RubrosList({ obraId, initialRubros }: RubrosListProps) {
+export function RubrosList({ obraId, initialRubros, initialTareas }: RubrosListProps) {
   const [rubros, setRubros] = useState(initialRubros)
+  const [tareas, setTareas] = useState(initialTareas)
   const [nombre, setNombre] = useState('')
   const [descripcion, setDescripcion] = useState('')
   const [loading, setLoading] = useState(false)
   const [deleting, setDeleting] = useState<string | null>(null)
+  const [deletingTarea, setDeletingTarea] = useState<string | null>(null)
   const [open, setOpen] = useState(false)
+  const [tareaDialog, setTareaDialog] = useState<{ rubroId: string; open: boolean } | null>(null)
+  const [nombreTarea, setNombreTarea] = useState('')
+  const [addingTarea, setAddingTarea] = useState(false)
+  const [expandedRubros, setExpandedRubros] = useState<Set<string>>(new Set())
   const router = useRouter()
+
+  const toggleRubro = (id: string) => {
+    setExpandedRubros(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const getTareasForRubro = (rubroId: string) => tareas.filter(t => t.rubro_id === rubroId)
 
   const handleAdd = async () => {
     if (!nombre.trim()) return
@@ -70,8 +94,50 @@ export function RubrosList({ obraId, initialRubros }: RubrosListProps) {
 
     if (!error) {
       setRubros(rubros.filter((r) => r.id !== id))
+      setTareas(tareas.filter((t) => t.rubro_id !== id))
     }
     setDeleting(null)
+    router.refresh()
+  }
+
+  const handleAddTarea = async (rubroId: string) => {
+    if (!nombreTarea.trim()) return
+    setAddingTarea(true)
+
+    const supabase = createClient()
+    const rubroTareas = getTareasForRubro(rubroId)
+    const { data, error } = await supabase
+      .from('tareas')
+      .insert({
+        rubro_id: rubroId,
+        nombre: nombreTarea.trim(),
+        orden: rubroTareas.length,
+      })
+      .select()
+      .single()
+
+    if (!error && data) {
+      setTareas([...tareas, data])
+      setNombreTarea('')
+      setTareaDialog(null)
+      setExpandedRubros(prev => new Set(prev).add(rubroId))
+    }
+    setAddingTarea(false)
+    router.refresh()
+  }
+
+  const handleDeleteTarea = async (tareaId: string) => {
+    setDeletingTarea(tareaId)
+    const supabase = createClient()
+    const { error } = await supabase
+      .from('tareas')
+      .delete()
+      .eq('id', tareaId)
+
+    if (!error) {
+      setTareas(tareas.filter((t) => t.id !== tareaId))
+    }
+    setDeletingTarea(null)
     router.refresh()
   }
 
@@ -139,38 +205,135 @@ export function RubrosList({ obraId, initialRubros }: RubrosListProps) {
           </p>
         ) : (
           <div className="space-y-2">
-            {rubros.map((rubro) => (
-              <div
-                key={rubro.id}
-                className="flex items-center justify-between p-3 rounded-lg border bg-card"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="rounded-md bg-muted p-2">
-                    <Wrench className="size-4 text-muted-foreground" />
+            {rubros.map((rubro) => {
+              const rubroTareas = getTareasForRubro(rubro.id)
+              const isExpanded = expandedRubros.has(rubro.id)
+              
+              return (
+                <Collapsible key={rubro.id} open={isExpanded} onOpenChange={() => toggleRubro(rubro.id)}>
+                  <div className="rounded-lg border bg-card">
+                    <div className="flex items-center justify-between p-3">
+                      <div className="flex items-center gap-3 flex-1">
+                        <CollapsibleTrigger asChild>
+                          <Button variant="ghost" size="sm" className="p-1 h-auto">
+                            {isExpanded ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
+                          </Button>
+                        </CollapsibleTrigger>
+                        <div className="rounded-md bg-muted p-2">
+                          <Wrench className="size-4 text-muted-foreground" />
+                        </div>
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2">
+                            <p className="font-medium">{rubro.nombre}</p>
+                            {rubroTareas.length > 0 && (
+                              <Badge variant="secondary" className="text-xs">
+                                {rubroTareas.length} tarea{rubroTareas.length !== 1 ? 's' : ''}
+                              </Badge>
+                            )}
+                          </div>
+                          {rubro.descripcion && (
+                            <p className="text-sm text-muted-foreground">{rubro.descripcion}</p>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setTareaDialog({ rubroId: rubro.id, open: true })}
+                        >
+                          <Plus className="size-4 mr-1" />
+                          Tarea
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => handleDelete(rubro.id)}
+                          disabled={deleting === rubro.id}
+                        >
+                          {deleting === rubro.id ? (
+                            <Loader2 className="size-4 animate-spin" />
+                          ) : (
+                            <Trash2 className="size-4 text-destructive" />
+                          )}
+                        </Button>
+                      </div>
+                    </div>
+                    <CollapsibleContent>
+                      <div className="border-t px-3 py-2 bg-muted/30">
+                        {rubroTareas.length === 0 ? (
+                          <p className="text-sm text-muted-foreground text-center py-2">
+                            Sin tareas definidas
+                          </p>
+                        ) : (
+                          <div className="space-y-1">
+                            {rubroTareas.map((tarea) => (
+                              <div key={tarea.id} className="flex items-center justify-between py-1 px-2 rounded hover:bg-muted/50">
+                                <span className="text-sm">{tarea.nombre}</span>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="size-6"
+                                  onClick={() => handleDeleteTarea(tarea.id)}
+                                  disabled={deletingTarea === tarea.id}
+                                >
+                                  {deletingTarea === tarea.id ? (
+                                    <Loader2 className="size-3 animate-spin" />
+                                  ) : (
+                                    <Trash2 className="size-3 text-destructive" />
+                                  )}
+                                </Button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </CollapsibleContent>
                   </div>
-                  <div>
-                    <p className="font-medium">{rubro.nombre}</p>
-                    {rubro.descripcion && (
-                      <p className="text-sm text-muted-foreground">{rubro.descripcion}</p>
-                    )}
-                  </div>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => handleDelete(rubro.id)}
-                  disabled={deleting === rubro.id}
-                >
-                  {deleting === rubro.id ? (
-                    <Loader2 className="size-4 animate-spin" />
-                  ) : (
-                    <Trash2 className="size-4 text-destructive" />
-                  )}
-                </Button>
-              </div>
-            ))}
+                </Collapsible>
+              )
+            })}
           </div>
         )}
+
+        {/* Dialog para agregar tarea */}
+        <Dialog open={tareaDialog?.open} onOpenChange={(open) => !open && setTareaDialog(null)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Nueva Tarea</DialogTitle>
+              <DialogDescription>
+                Agrega una tarea específica a este rubro
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label htmlFor="nombreTarea">Nombre de la tarea</Label>
+                <Input
+                  id="nombreTarea"
+                  placeholder="Ej: Instalacion de luminarias, Pintura de techos"
+                  value={nombreTarea}
+                  onChange={(e) => setNombreTarea(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && tareaDialog) {
+                      handleAddTarea(tareaDialog.rubroId)
+                    }
+                  }}
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setTareaDialog(null)}>
+                Cancelar
+              </Button>
+              <Button 
+                onClick={() => tareaDialog && handleAddTarea(tareaDialog.rubroId)} 
+                disabled={addingTarea || !nombreTarea.trim()}
+              >
+                {addingTarea ? <Loader2 className="size-4 animate-spin" /> : 'Agregar'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </CardContent>
     </Card>
   )

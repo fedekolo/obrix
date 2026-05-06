@@ -26,6 +26,16 @@ export interface Rubro {
   descripcion: string | null
   orden: number
   created_at: string
+  tareas?: Tarea[]
+}
+
+export interface Tarea {
+  id: string
+  rubro_id: string
+  nombre: string
+  orden: number
+  created_at: string
+  rubro?: Rubro
 }
 
 export interface Avance {
@@ -33,11 +43,13 @@ export interface Avance {
   obra_id: string
   sector_id: string
   rubro_id: string
+  tarea_id: string | null
   user_id: string
   descripcion: string
   created_at: string
   sector?: Sector
   rubro?: Rubro
+  tarea?: Tarea
   archivos?: Archivo[]
 }
 
