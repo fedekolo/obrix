@@ -19,7 +19,6 @@ export const DEFAULT_RUBROS_TAREAS = [
   {
     nombre: 'Mesadas de cocina',
     tareas: [
-      'Colocación mesada',
       'Mesada bajo pileta',
       'Mesada barra',
       'Traforos',
