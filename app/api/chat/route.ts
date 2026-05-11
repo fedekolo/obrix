@@ -27,6 +27,8 @@ interface RubroData {
 }
 
 export async function POST(req: Request) {
+  console.log('[v0] Chat API called')
+  
   const { messages, obraId, sectores, rubros, tareas } = await req.json() as {
     messages: unknown[]
     obraId: string
@@ -35,10 +37,15 @@ export async function POST(req: Request) {
     tareas: TareaData[]
   }
 
+  console.log('[v0] obraId:', obraId, 'messages:', messages?.length)
+  console.log('[v0] GROQ_API_KEY exists:', !!process.env.GROQ_API_KEY)
+
   const supabase = await createClient()
   
   // Get authenticated user
   const { data: { user }, error: authError } = await supabase.auth.getUser()
+  console.log('[v0] Auth check - user:', !!user, 'error:', authError?.message)
+  
   if (authError || !user) {
     return new Response('Unauthorized', { status: 401 })
   }
