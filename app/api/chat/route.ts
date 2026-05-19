@@ -86,49 +86,19 @@ ${sectoresList}
 RUBROS Y TAREAS DISPONIBLES:
 ${rubrosList}
 
-=== REGLA PRINCIPAL ===
-NUNCA registres un avance sin antes confirmar la tarea especifica con el usuario, A MENOS que el usuario mencione EXACTAMENTE el nombre de una tarea existente.
+=== FLUJO OBLIGATORIO EN 2 PASOS ===
 
-=== EJEMPLOS DE CUANDO DEBES PREGUNTAR (OBLIGATORIO) ===
+PASO 1 - SIEMPRE usa "buscarTareaParaAvance" primero:
+- Cuando el usuario mencione un trabajo, SIEMPRE llama a buscarTareaParaAvance
+- Esta herramienta analiza el texto y te dice si hay coincidencia exacta o si debes preguntar
+- NUNCA llames a registrarAvance directamente sin antes usar buscarTareaParaAvance
 
-Usuario: "montamos muebles de cocina en la 502"
-- "muebles de cocina" es un RUBRO, no una tarea
-- El rubro tiene tareas: Alacena, Bajo mesada, etc.
-- DEBES responder: "En el rubro Muebles de cocina hay varias tareas: Alacena, Bajo mesada, Tomas barra. ¿Cual corresponde? O puedo crear una tarea nueva."
+PASO 2 - Segun el resultado:
+- Si buscarTareaParaAvance dice "coincidencia_exacta" → usa registrarAvance
+- Si dice "requiere_confirmacion" → muestra las opciones al usuario y espera respuesta
+- Si dice "sin_coincidencia" → ofrece crear tarea nueva
 
-Usuario: "hicimos electricidad en la 501"
-- "electricidad" es un RUBRO, no una tarea
-- DEBES preguntar cual tarea especifica
-
-Usuario: "terminamos la pintura en el hall"
-- "pintura" es un RUBRO con varias tareas (paredes, techos, etc.)
-- DEBES preguntar cual tarea especifica
-
-=== EJEMPLOS DE CUANDO PUEDES REGISTRAR DIRECTO ===
-
-Usuario: "instalamos la alacena en la 502"
-- "alacena" coincide EXACTAMENTE con la tarea "Alacena"
-- Puedes registrar directamente
-
-Usuario: "colocamos el bajo mesada en la 503"  
-- "bajo mesada" coincide EXACTAMENTE con la tarea "Bajo mesada"
-- Puedes registrar directamente
-
-=== FLUJO OBLIGATORIO ===
-
-1. Lee el mensaje del usuario
-2. Identifica si menciona:
-   a) Una TAREA especifica por nombre → registra directo
-   b) Un RUBRO general → PREGUNTA cual tarea
-   c) Algo ambiguo → PREGUNTA para aclarar
-
-3. Si no existe tarea adecuada, ofrece crear una nueva:
-   "No encontre tarea para '[trabajo]'. ¿Queres que cree la tarea '[sugerencia]' en el rubro [rubro]?"
-
-4. SIEMPRE espera confirmacion antes de registrar si hay cualquier ambiguedad
-
-=== AL REGISTRAR ===
-Formato de respuesta:
+=== FORMATO DE RESPUESTA AL REGISTRAR ===
 "Registrado en [SECTOR]:
 Rubro: [NOMBRE DEL RUBRO]
 Tarea: [NOMBRE DE LA TAREA]"
@@ -140,8 +110,139 @@ Responde en espanol, conciso y directo.`
     system: systemPrompt,
     messages: await convertToModelMessages(messages),
     tools: {
+      buscarTareaParaAvance: tool({
+        description: 'OBLIGATORIO: Usa esta herramienta ANTES de registrar cualquier avance. Analiza el texto del usuario y determina si hay una tarea exacta o si debes pedir confirmacion.',
+        inputSchema: z.object({
+          texto_usuario: z.string().describe('El texto exacto que escribio el usuario describiendo el trabajo'),
+          sector_id: z.string().describe('ID del sector mencionado'),
+        }),
+        execute: async ({ texto_usuario, sector_id }) => {
+          const textoLower = texto_usuario.toLowerCase()
+          const sector = sectores.find((s) => s.id === sector_id)
+          
+          if (!sector) {
+            return { 
+              resultado: 'error', 
+              mensaje: 'Sector no encontrado.' 
+            }
+          }
+
+          // Check if user mentioned a rubro name (which means they need to specify task)
+          const rubroMencionado = rubros.find(r => 
+            textoLower.includes(r.nombre.toLowerCase())
+          )
+
+          if (rubroMencionado) {
+            // User mentioned a rubro, not a specific task - need to ask
+            const tareasDelRubro = tareas?.filter(t => t.rubro_id === rubroMencionado.id) || []
+            
+            if (tareasDelRubro.length > 1) {
+              return {
+                resultado: 'requiere_confirmacion',
+                mensaje: `Mencionaste "${rubroMencionado.nombre}" que tiene varias tareas. ¿Cual corresponde?`,
+                rubro: { id: rubroMencionado.id, nombre: rubroMencionado.nombre },
+                opciones: tareasDelRubro.map(t => ({ id: t.id, nombre: t.nombre })),
+                sector: { id: sector.id, nombre: sector.nombre },
+                sugerencia_crear: `O puedo crear una tarea nueva en ${rubroMencionado.nombre}`
+              }
+            } else if (tareasDelRubro.length === 1) {
+              // Only one task in this rubro - still ask to confirm
+              return {
+                resultado: 'requiere_confirmacion',
+                mensaje: `En el rubro "${rubroMencionado.nombre}" solo hay una tarea: ${tareasDelRubro[0].nombre}. ¿Es correcta?`,
+                rubro: { id: rubroMencionado.id, nombre: rubroMencionado.nombre },
+                opciones: tareasDelRubro.map(t => ({ id: t.id, nombre: t.nombre })),
+                sector: { id: sector.id, nombre: sector.nombre },
+              }
+            }
+          }
+
+          // Check for exact task name match
+          const tareaExacta = tareas?.find(t => 
+            textoLower.includes(t.nombre.toLowerCase())
+          )
+
+          if (tareaExacta) {
+            const rubroDeTarea = rubros.find(r => r.id === tareaExacta.rubro_id)
+            return {
+              resultado: 'coincidencia_exacta',
+              mensaje: `Encontre coincidencia exacta con la tarea "${tareaExacta.nombre}"`,
+              tarea: { id: tareaExacta.id, nombre: tareaExacta.nombre },
+              rubro: rubroDeTarea ? { id: rubroDeTarea.id, nombre: rubroDeTarea.nombre } : null,
+              sector: { id: sector.id, nombre: sector.nombre },
+            }
+          }
+
+          // No match found - suggest possible rubros based on keywords
+          const sugerencias: { rubro: string; rubroId: string; tareas: { id: string; nombre: string }[] }[] = []
+          
+          // Simple keyword matching for common terms
+          const keywords: Record<string, string[]> = {
+            'mueble': ['Muebles cocina'],
+            'cocina': ['Muebles cocina', 'Mesadas de cocina'],
+            'mesada': ['Mesadas de cocina', 'Mesadas de baño'],
+            'alacena': ['Muebles cocina'],
+            'bajo': ['Muebles cocina'],
+            'electri': ['Electricidad'],
+            'luz': ['Electricidad'],
+            'toma': ['Electricidad'],
+            'enchufe': ['Electricidad'],
+            'pintura': ['Pintura'],
+            'pintar': ['Pintura'],
+            'pared': ['Pintura', 'Yesería'],
+            'techo': ['Pintura', 'Yesería'],
+            'yeso': ['Yesería'],
+            'revoque': ['Yesería'],
+            'piso': ['Colocación'],
+            'ceramico': ['Colocación'],
+            'porcelanato': ['Colocación'],
+            'sanitari': ['Sanitaria'],
+            'canilla': ['Sanitaria'],
+            'griferia': ['Sanitaria'],
+            'inodoro': ['Sanitaria'],
+            'puerta': ['Carpinterías'],
+            'ventana': ['Carpinterías'],
+            'carpinter': ['Carpinterías'],
+          }
+
+          for (const [keyword, rubroNames] of Object.entries(keywords)) {
+            if (textoLower.includes(keyword)) {
+              for (const rubroName of rubroNames) {
+                const rubro = rubros.find(r => r.nombre.toLowerCase() === rubroName.toLowerCase())
+                if (rubro && !sugerencias.find(s => s.rubroId === rubro.id)) {
+                  const tareasRubro = tareas?.filter(t => t.rubro_id === rubro.id) || []
+                  sugerencias.push({
+                    rubro: rubro.nombre,
+                    rubroId: rubro.id,
+                    tareas: tareasRubro.map(t => ({ id: t.id, nombre: t.nombre }))
+                  })
+                }
+              }
+            }
+          }
+
+          if (sugerencias.length > 0) {
+            return {
+              resultado: 'requiere_confirmacion',
+              mensaje: `No encontre tarea exacta para "${texto_usuario}". Estas son las opciones mas cercanas:`,
+              sugerencias,
+              sector: { id: sector.id, nombre: sector.nombre },
+              sugerencia_crear: 'O puedo crear una tarea nueva si ninguna aplica'
+            }
+          }
+
+          // No suggestions found
+          return {
+            resultado: 'sin_coincidencia',
+            mensaje: `No encontre ninguna tarea ni rubro relacionado con "${texto_usuario}". ¿Queres que cree una tarea nueva? Decime en que rubro deberia ir.`,
+            rubros_disponibles: rubros.map(r => ({ id: r.id, nombre: r.nombre })),
+            sector: { id: sector.id, nombre: sector.nombre },
+          }
+        },
+      }),
+
       registrarAvance: tool({
-        description: 'Registra UN avance de obra. REQUIERE tarea_id. Archiva automaticamente avances anteriores de la misma tarea+sector.',
+        description: 'Registra UN avance de obra. SOLO usar despues de buscarTareaParaAvance cuando hay coincidencia_exacta o el usuario confirmo la tarea.',
         inputSchema: z.object({
           sector_id: z.string().describe('ID del sector'),
           tarea_id: z.string().describe('ID de la tarea (OBLIGATORIO)'),

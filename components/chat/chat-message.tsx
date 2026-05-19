@@ -23,10 +23,18 @@ interface ToolPart {
   input?: Record<string, unknown>
   output?: {
     success?: boolean
+    resultado?: string
     message?: string
+    mensaje?: string
     count?: number
     avance?: { id: string; tarea: string; rubro?: string; sector: string }
-    tarea?: { id: string; nombre: string; rubro_id: string }
+    tarea?: { id: string; nombre: string; rubro_id?: string }
+    rubro?: { id: string; nombre: string }
+    sector?: { id: string; nombre: string }
+    opciones?: Array<{ id: string; nombre: string }>
+    sugerencias?: Array<{ rubro: string; rubroId: string; tareas: { id: string; nombre: string }[] }>
+    sugerencia_crear?: string
+    rubros_disponibles?: Array<{ id: string; nombre: string }>
     avances?: Array<{ fecha: string; sector?: string; tarea?: string; rubro?: string; descripcion: string }>
     historial?: Array<{ fecha: string; descripcion: string; estado: string }>
     sectores?: Array<{ id: string; nombre: string; tipo: string }>
@@ -63,6 +71,13 @@ function ToolCallDisplay({ tool }: { tool: ToolPart }) {
         <span>Error al procesar</span>
       </div>
     )
+  }
+
+  // buscarTareaParaAvance - don't show UI, the LLM will respond with text
+  if (toolName === 'buscarTareaParaAvance') {
+    // This tool's output is used by the LLM to formulate a response
+    // We don't need to show it in the UI
+    return null
   }
 
   // registrarAvance - single avance registered
