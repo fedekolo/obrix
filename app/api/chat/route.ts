@@ -204,11 +204,11 @@ Responde en espanol, conciso y directo. Ante la duda, PREGUNTA.`
       }),
 
       consultarAvances: tool({
-        description: 'Consulta los avances ACTIVOS (no archivados).',
+        description: 'Consulta los avances ACTIVOS (no archivados). Permite filtrar por uno o varios sectores.',
         inputSchema: z.object({
-          sector_id: z.string().optional().describe('Filtrar por un sector especifico'),
+          sector_ids: z.array(z.string()).optional().describe('IDs de sectores para filtrar. Puede ser uno o varios.'),
         }),
-        execute: async ({ sector_id }) => {
+        execute: async ({ sector_ids }) => {
           try {
             let query = supabase
               .from('avances')
@@ -217,7 +217,9 @@ Responde en espanol, conciso y directo. Ante la duda, PREGUNTA.`
               .eq('archivado', false)
               .order('created_at', { ascending: false })
 
-            if (sector_id) query = query.eq('sector_id', sector_id)
+            if (sector_ids && sector_ids.length > 0) {
+              query = query.in('sector_id', sector_ids)
+            }
 
             const { data, error } = await query
             if (error) return { success: false, message: `Error: ${error.message}` }
