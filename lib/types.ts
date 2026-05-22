@@ -33,6 +33,10 @@ export interface Tarea {
   id: string
   rubro_id: string
   nombre: string
+  descripcion: string | null
+  aliases: string[]
+  keywords: string[]
+  ejemplos: string[]
   orden: number
   created_at: string
   rubro?: Rubro
