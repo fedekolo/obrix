@@ -1,7 +1,7 @@
 'use client'
 
-import { useRef, useEffect, useState, useMemo } from 'react'
-import { useChat } from '@ai-sdk/react'
+import { useRef, useEffect, useState, useMemo, useCallback } from 'react'
+import { useChat, type Message } from '@ai-sdk/react'
 import { DefaultChatTransport } from 'ai'
 import { Send, Mic, MicOff, ImagePlus, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -16,10 +16,19 @@ interface ChatInterfaceProps {
   tareas: Tarea[]
 }
 
+interface StoredMessage {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  created_at: string
+}
+
 export function ChatInterface({ obraId, sectores, rubros, tareas }: ChatInterfaceProps) {
   const [isRecording, setIsRecording] = useState(false)
   const [isTranscribing, setIsTranscribing] = useState(false)
   const [pendingImages, setPendingImages] = useState<string[]>([])
+  const [isLoadingHistory, setIsLoadingHistory] = useState(true)
+  const [initialMessages, setInitialMessages] = useState<Message[]>([])
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -27,6 +36,31 @@ export function ChatInterface({ obraId, sectores, rubros, tareas }: ChatInterfac
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   const [inputValue, setInputValue] = useState('')
+
+  // Load chat history on mount
+  useEffect(() => {
+    const loadHistory = async () => {
+      try {
+        const res = await fetch(`/api/chat/history?obraId=${obraId}`)
+        if (res.ok) {
+          const { messages: storedMessages } = await res.json()
+          if (storedMessages && storedMessages.length > 0) {
+            const converted: Message[] = storedMessages.map((m: StoredMessage) => ({
+              id: m.id,
+              role: m.role,
+              content: m.content,
+            }))
+            setInitialMessages(converted)
+          }
+        }
+      } catch {
+        // Failed to load history, continue with empty chat
+      } finally {
+        setIsLoadingHistory(false)
+      }
+    }
+    loadHistory()
+  }, [obraId])
   
   // Memoize transport to prevent recreation on every render
   const transport = useMemo(() => new DefaultChatTransport({
@@ -43,9 +77,57 @@ export function ChatInterface({ obraId, sectores, rubros, tareas }: ChatInterfac
     }),
   }), [obraId, sectores, rubros, tareas])
 
-  const { messages, sendMessage, status } = useChat({ transport })
+  const { messages, sendMessage, status } = useChat({ 
+    transport,
+    initialMessages: isLoadingHistory ? [] : initialMessages,
+  })
 
   const isLoading = status === 'streaming' || status === 'submitted'
+
+  // Save message to history
+  const saveMessage = useCallback(async (role: 'user' | 'assistant', content: string) => {
+    try {
+      await fetch('/api/chat/history', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ obraId, role, content }),
+      })
+    } catch {
+      // Failed to save, continue anyway
+    }
+  }, [obraId])
+
+  // Track last saved message to avoid duplicates
+  const lastSavedRef = useRef<string | null>(null)
+
+  // Save new messages when they appear
+  useEffect(() => {
+    if (messages.length === 0) return
+    
+    const lastMessage = messages[messages.length - 1]
+    
+    // Skip if already saved or if it's from initial load
+    if (!lastMessage || lastSavedRef.current === lastMessage.id) return
+    if (initialMessages.some(m => m.id === lastMessage.id)) return
+    
+    // Only save when message is complete (not streaming)
+    if (status === 'streaming') return
+    
+    // Extract text content
+    const textContent = typeof lastMessage.content === 'string' 
+      ? lastMessage.content 
+      : Array.isArray(lastMessage.parts)
+        ? lastMessage.parts
+            .filter((p): p is { type: 'text'; text: string } => p.type === 'text')
+            .map(p => p.text)
+            .join('')
+        : ''
+    
+    if (textContent) {
+      lastSavedRef.current = lastMessage.id
+      saveMessage(lastMessage.role as 'user' | 'assistant', textContent)
+    }
+  }, [messages, status, saveMessage, initialMessages])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -155,7 +237,11 @@ export function ChatInterface({ obraId, sectores, rubros, tareas }: ChatInterfac
     <div className="flex flex-col h-full">
       {/* Messages area */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {messages.length === 0 ? (
+        {isLoadingHistory ? (
+          <div className="flex items-center justify-center h-full">
+            <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+          </div>
+        ) : messages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center p-8">
             <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mb-4">
               <Send className="w-8 h-8 text-primary" />

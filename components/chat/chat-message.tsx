@@ -73,8 +73,8 @@ function ToolCallDisplay({ tool }: { tool: ToolPart }) {
     )
   }
 
-  // buscarTareaParaAvance - don't show UI, the LLM will respond with text
-  if (toolName === 'buscarTareaParaAvance') {
+  // analizarTexto - don't show UI, the LLM will respond with text
+  if (toolName === 'analizarTexto') {
     // This tool's output is used by the LLM to formulate a response
     // We don't need to show it in the UI
     return null

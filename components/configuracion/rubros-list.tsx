@@ -166,16 +166,28 @@ export function RubrosList({ obraId, initialRubros, initialTareas }: RubrosListP
         return
       }
 
-      // Now insert tareas for each rubro
-      const tareasToInsert: { rubro_id: string; nombre: string; orden: number }[] = []
+      // Now insert tareas for each rubro with semantic fields
+      const tareasToInsert: { 
+        rubro_id: string
+        nombre: string
+        descripcion: string | null
+        aliases: string[]
+        keywords: string[]
+        ejemplos: string[]
+        orden: number 
+      }[] = []
       
       DEFAULT_RUBROS_TAREAS.forEach((defaultRubro, index) => {
         const insertedRubro = newRubros[index]
         if (insertedRubro) {
-          defaultRubro.tareas.forEach((tareaNombre, tareaIndex) => {
+          defaultRubro.tareas.forEach((tarea, tareaIndex) => {
             tareasToInsert.push({
               rubro_id: insertedRubro.id,
-              nombre: tareaNombre,
+              nombre: tarea.nombre,
+              descripcion: tarea.descripcion || null,
+              aliases: tarea.aliases || [],
+              keywords: tarea.keywords || [],
+              ejemplos: tarea.ejemplos || [],
               orden: tareaIndex,
             })
           })

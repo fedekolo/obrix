@@ -2,6 +2,7 @@ import { streamText, tool, convertToModelMessages } from 'ai'
 import { createGroq } from '@ai-sdk/groq'
 import { z } from 'zod'
 import { createClient } from '@/lib/supabase/server'
+import { findBestMatch, getMatchDecision } from '@/lib/semantic-matching'
 
 const groq = createGroq({
   apiKey: process.env.GROQ_API_KEY,
@@ -17,6 +18,10 @@ interface SectorData {
 interface TareaData {
   id: string
   nombre: string
+  descripcion?: string | null
+  aliases?: string[]
+  keywords?: string[]
+  ejemplos?: string[]
   rubro_id: string
 }
 
@@ -27,8 +32,6 @@ interface RubroData {
 }
 
 export async function POST(req: Request) {
-  console.log('[v0] Chat API called')
-  
   const { messages, obraId, sectores, rubros, tareas } = await req.json() as {
     messages: unknown[]
     obraId: string
@@ -37,15 +40,10 @@ export async function POST(req: Request) {
     tareas: TareaData[]
   }
 
-  console.log('[v0] obraId:', obraId, 'messages:', messages?.length)
-  console.log('[v0] GROQ_API_KEY exists:', !!process.env.GROQ_API_KEY)
-
   const supabase = await createClient()
   
   // Get authenticated user
   const { data: { user }, error: authError } = await supabase.auth.getUser()
-  console.log('[v0] Auth check - user:', !!user, 'error:', authError?.message)
-  
   if (authError || !user) {
     return new Response('Unauthorized', { status: 401 })
   }
@@ -78,7 +76,8 @@ export async function POST(req: Request) {
     ? rubrosWithTareas.join('\n')
     : '(No hay rubros configurados. Pide al usuario que los configure primero.)'
 
-  const systemPrompt = `Eres un asistente de obra que registra avances de construccion. Obra: "${obra.nombre}".
+  const systemPrompt = `Eres un asistente inteligente de obra que registra avances de construccion. Obra: "${obra.nombre}".
+Debes comportarte como un capataz experimentado que entiende el lenguaje informal de obra.
 
 SECTORES DISPONIBLES:
 ${sectoresList}
@@ -86,34 +85,73 @@ ${sectoresList}
 RUBROS Y TAREAS DISPONIBLES:
 ${rubrosList}
 
-=== INSTRUCCIONES ===
+=== FLUJO DE TRABAJO OBLIGATORIO ===
 
-1. CUANDO EL USUARIO MENCIONA TRABAJOS:
-   - Si menciona UNA tarea que coincide EXACTAMENTE con una tarea existente → registra directo
-   - Si menciona MULTIPLES trabajos (ej: "mesada y alzadas") → procesa UNO a la vez, preguntando por cada uno
-   - Si menciona algo que NO coincide exactamente → PREGUNTA antes de registrar
+PASO 1 - SIEMPRE usa "analizarTexto" primero cuando el usuario mencione trabajos
+Esta herramienta analiza semanticamente el texto y te dice la accion a tomar.
 
-2. EJEMPLOS DE COINCIDENCIA EXACTA (registrar directo):
-   - "Instalamos Mesada bajo pileta" → coincide con tarea "Mesada bajo pileta"
-   - "Colocamos el Bajo mesada" → coincide con tarea "Bajo mesada"
+PASO 2 - Segun el resultado de analizarTexto:
+- Si dice "auto_save" (score >= 0.85): registra automaticamente con registrarAvance
+- Si dice "confirm" (score 0.60-0.85): pregunta al usuario si es correcto antes de registrar
+- Si dice "clarify" (score < 0.60): muestra las opciones y pregunta cual corresponde
 
-3. EJEMPLOS QUE REQUIEREN CONFIRMACION (preguntar primero):
-   - "Instalamos mesada y alzadas" → preguntar: "Encontre la tarea 'Mesada bajo pileta'. ¿La registro? Para 'alzadas' no encontre tarea, ¿queres que la cree?"
-   - "Hicimos muebles de cocina" → preguntar cual tarea especifica del rubro
-   - "Pusimos alzadas" → no existe, preguntar si crear nueva tarea
+PASO 3 - Al registrar, SIEMPRE guarda el texto ORIGINAL completo del usuario en la descripcion
 
-4. FORMATO AL REGISTRAR:
-   "Registrado en [SECTOR]:
-   Rubro: [RUBRO]
-   Tarea: [TAREA]"
+=== IMPORTANTE ===
+- NO inventes tareas
+- NO registres sin usar analizarTexto primero
+- SIEMPRE guarda el texto original del usuario como descripcion
+- Entiende sinonimos: "enchufes" = "Teclas y tomas", "luces" = iluminacion
+- Si el usuario menciona multiples trabajos, procesalos uno por uno
 
-Responde en espanol, conciso y directo. Ante la duda, PREGUNTA.`
+=== FORMATO AL REGISTRAR ===
+"Registrado en [SECTOR]:
+Rubro: [RUBRO]
+Tarea: [TAREA]"
+
+Responde en espanol, conciso y amigable.`
 
   const result = streamText({
     model: groq('llama-3.3-70b-versatile'),
     system: systemPrompt,
     messages: await convertToModelMessages(messages),
     tools: {
+      analizarTexto: tool({
+        description: 'OBLIGATORIO: Usa esta herramienta PRIMERO cuando el usuario mencione un trabajo o avance. Analiza semanticamente el texto y determina la tarea mas probable.',
+        inputSchema: z.object({
+          texto_usuario: z.string().describe('El texto completo que escribio el usuario'),
+        }),
+        execute: async ({ texto_usuario }) => {
+          try {
+            const matches = findBestMatch(texto_usuario, tareas, rubros)
+            const decision = getMatchDecision(matches)
+            
+            return {
+              success: true,
+              action: decision.action,
+              topMatch: decision.topMatch ? {
+                tarea_id: decision.topMatch.tarea.id,
+                tarea_nombre: decision.topMatch.tarea.nombre,
+                rubro_id: decision.topMatch.rubro?.id,
+                rubro_nombre: decision.topMatch.rubro?.nombre,
+                score: Math.round(decision.topMatch.score * 100),
+                matchType: decision.topMatch.matchType,
+              } : null,
+              alternatives: decision.alternatives.map(m => ({
+                tarea_id: m.tarea.id,
+                tarea_nombre: m.tarea.nombre,
+                rubro_nombre: m.rubro?.nombre,
+                score: Math.round(m.score * 100),
+              })),
+              message: decision.message,
+              texto_original: texto_usuario,
+            }
+          } catch (err) {
+            return { success: false, message: `Error: ${err}` }
+          }
+        },
+      }),
+
       registrarAvance: tool({
         description: 'Registra UN avance de obra. SOLO usar cuando el nombre de la tarea coincide EXACTAMENTE con lo que dijo el usuario, o cuando el usuario confirmo la tarea.',
         inputSchema: z.object({
