@@ -79,7 +79,7 @@ export function ChatInterface({ obraId, sectores, rubros, tareas }: ChatInterfac
 
   const { messages, sendMessage, status } = useChat({ 
     transport,
-    initialMessages,
+    initialMessages: isLoadingHistory ? [] : initialMessages,
   })
 
   const isLoading = status === 'streaming' || status === 'submitted'
@@ -237,7 +237,11 @@ export function ChatInterface({ obraId, sectores, rubros, tareas }: ChatInterfac
     <div className="flex flex-col h-full">
       {/* Messages area */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {messages.length === 0 ? (
+        {isLoadingHistory ? (
+          <div className="flex items-center justify-center h-full">
+            <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+          </div>
+        ) : messages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center p-8">
             <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mb-4">
               <Send className="w-8 h-8 text-primary" />
