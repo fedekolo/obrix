@@ -23,19 +23,10 @@ interface StoredMessage {
   created_at: string
 }
 
+// Wrapper that loads history first
 export function ChatInterface({ obraId, sectores, rubros, tareas }: ChatInterfaceProps) {
-  const [isRecording, setIsRecording] = useState(false)
-  const [isTranscribing, setIsTranscribing] = useState(false)
-  const [pendingImages, setPendingImages] = useState<string[]>([])
   const [isLoadingHistory, setIsLoadingHistory] = useState(true)
   const [initialMessages, setInitialMessages] = useState<Message[]>([])
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
-  const chunksRef = useRef<Blob[]>([])
-  const messagesEndRef = useRef<HTMLDivElement>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
-
-  const [inputValue, setInputValue] = useState('')
 
   // Load chat history on mount
   useEffect(() => {
@@ -61,6 +52,44 @@ export function ChatInterface({ obraId, sectores, rubros, tareas }: ChatInterfac
     }
     loadHistory()
   }, [obraId])
+
+  if (isLoadingHistory) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+      </div>
+    )
+  }
+
+  return (
+    <ChatInterfaceInner
+      obraId={obraId}
+      sectores={sectores}
+      rubros={rubros}
+      tareas={tareas}
+      initialMessages={initialMessages}
+    />
+  )
+}
+
+// Inner component that renders the chat with pre-loaded messages
+function ChatInterfaceInner({ 
+  obraId, 
+  sectores, 
+  rubros, 
+  tareas,
+  initialMessages,
+}: ChatInterfaceProps & { initialMessages: Message[] }) {
+  const [isRecording, setIsRecording] = useState(false)
+  const [isTranscribing, setIsTranscribing] = useState(false)
+  const [pendingImages, setPendingImages] = useState<string[]>([])
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const chunksRef = useRef<Blob[]>([])
+  const messagesEndRef = useRef<HTMLDivElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  const [inputValue, setInputValue] = useState('')
   
   // Memoize transport to prevent recreation on every render
   const transport = useMemo(() => new DefaultChatTransport({
@@ -77,14 +106,7 @@ export function ChatInterface({ obraId, sectores, rubros, tareas }: ChatInterfac
     }),
   }), [obraId, sectores, rubros, tareas])
 
-  // Use a unique chatId that changes when history is loaded to force useChat to reinitialize
-  const chatId = useMemo(() => {
-    if (isLoadingHistory) return 'loading'
-    return `chat-${obraId}-${initialMessages.length}`
-  }, [isLoadingHistory, obraId, initialMessages.length])
-
   const { messages, sendMessage, status } = useChat({ 
-    id: chatId,
     transport,
     initialMessages,
   })
