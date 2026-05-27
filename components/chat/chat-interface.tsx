@@ -77,9 +77,16 @@ export function ChatInterface({ obraId, sectores, rubros, tareas }: ChatInterfac
     }),
   }), [obraId, sectores, rubros, tareas])
 
+  // Use a unique chatId that changes when history is loaded to force useChat to reinitialize
+  const chatId = useMemo(() => {
+    if (isLoadingHistory) return 'loading'
+    return `chat-${obraId}-${initialMessages.length}`
+  }, [isLoadingHistory, obraId, initialMessages.length])
+
   const { messages, sendMessage, status } = useChat({ 
+    id: chatId,
     transport,
-    initialMessages: isLoadingHistory ? [] : initialMessages,
+    initialMessages,
   })
 
   const isLoading = status === 'streaming' || status === 'submitted'
