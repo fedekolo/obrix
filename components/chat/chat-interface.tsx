@@ -127,37 +127,34 @@ function ChatInterfaceInner({
     }
   }, [obraId])
 
-  // Track last saved message to avoid duplicates
-  const lastSavedRef = useRef<string | null>(null)
+  // Track saved message IDs to avoid duplicates
+  const savedIdsRef = useRef<Set<string>>(new Set(initialMessages.map(m => m.id)))
 
-  // Save new messages when they appear
+  // Save new messages when they appear and are complete
   useEffect(() => {
-    if (messages.length === 0) return
+    // Only check when not streaming (messages are complete)
+    if (status === 'streaming' || status === 'submitted') return
     
-    const lastMessage = messages[messages.length - 1]
-    
-    // Skip if already saved or if it's from initial load
-    if (!lastMessage || lastSavedRef.current === lastMessage.id) return
-    if (initialMessages.some(m => m.id === lastMessage.id)) return
-    
-    // Only save when message is complete (not streaming)
-    if (status === 'streaming') return
-    
-    // Extract text content
-    const textContent = typeof lastMessage.content === 'string' 
-      ? lastMessage.content 
-      : Array.isArray(lastMessage.parts)
-        ? lastMessage.parts
-            .filter((p): p is { type: 'text'; text: string } => p.type === 'text')
-            .map(p => p.text)
-            .join('')
-        : ''
-    
-    if (textContent) {
-      lastSavedRef.current = lastMessage.id
-      saveMessage(lastMessage.role as 'user' | 'assistant', textContent)
-    }
-  }, [messages, status, saveMessage, initialMessages])
+    messages.forEach((message) => {
+      // Skip if already saved
+      if (savedIdsRef.current.has(message.id)) return
+      
+      // Extract text content
+      const textContent = typeof message.content === 'string' 
+        ? message.content 
+        : Array.isArray(message.parts)
+          ? message.parts
+              .filter((p): p is { type: 'text'; text: string } => p.type === 'text')
+              .map(p => p.text)
+              .join('')
+          : ''
+      
+      if (textContent) {
+        savedIdsRef.current.add(message.id)
+        saveMessage(message.role as 'user' | 'assistant', textContent)
+      }
+    })
+  }, [messages, status, saveMessage])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
