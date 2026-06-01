@@ -116,10 +116,19 @@ function ChatInterfaceInner({
     }),
   }), [obraId, sectores, rubros, tareas])
 
-  const { messages, sendMessage, status } = useChat({ 
+  const { messages, sendMessage, status, setMessages } = useChat({ 
     transport,
-    initialMessages,
   })
+
+  // Load initial messages into useChat on mount
+  const hasLoadedRef = useRef(false)
+  useEffect(() => {
+    if (!hasLoadedRef.current && initialMessages.length > 0) {
+      console.log('[v0] Setting initial messages via setMessages:', initialMessages.length)
+      setMessages(initialMessages)
+      hasLoadedRef.current = true
+    }
+  }, [initialMessages, setMessages])
 
   console.log('[v0] useChat messages:', messages.length, 'status:', status)
 
@@ -154,19 +163,20 @@ function ChatInterfaceInner({
         return
       }
       
-      console.log('[v0] Processing message:', message.id, message.role, 'content type:', typeof message.content)
+      console.log('[v0] Processing message:', message.id, message.role, 'content:', message.content, 'parts:', message.parts)
       
-      // Extract text content
-      const textContent = typeof message.content === 'string' 
-        ? message.content 
-        : Array.isArray(message.parts)
-          ? message.parts
-              .filter((p): p is { type: 'text'; text: string } => p.type === 'text')
-              .map(p => p.text)
-              .join('')
-          : ''
+      // Extract text content - check content first, then parts
+      let textContent = ''
+      if (typeof message.content === 'string' && message.content) {
+        textContent = message.content
+      } else if (Array.isArray(message.parts)) {
+        textContent = message.parts
+          .filter((p): p is { type: 'text'; text: string } => p.type === 'text' && 'text' in p)
+          .map(p => p.text)
+          .join('')
+      }
       
-      console.log('[v0] Extracted text content length:', textContent.length)
+      console.log('[v0] Extracted text content:', textContent.length, textContent.substring(0, 100))
       
       if (textContent) {
         console.log('[v0] Saving message:', message.id, message.role)
