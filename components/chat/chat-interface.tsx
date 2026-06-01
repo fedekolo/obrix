@@ -31,27 +31,36 @@ export function ChatInterface({ obraId, sectores, rubros, tareas }: ChatInterfac
   // Load chat history on mount
   useEffect(() => {
     const loadHistory = async () => {
+      console.log('[v0] Loading chat history for obraId:', obraId)
       try {
         const res = await fetch(`/api/chat/history?obraId=${obraId}`)
+        console.log('[v0] History API response status:', res.status)
         if (res.ok) {
-          const { messages: storedMessages } = await res.json()
+          const data = await res.json()
+          console.log('[v0] History API response data:', data)
+          const storedMessages = data.messages
           if (storedMessages && storedMessages.length > 0) {
             const converted: Message[] = storedMessages.map((m: StoredMessage) => ({
               id: m.id,
               role: m.role,
               content: m.content,
             }))
+            console.log('[v0] Converted messages:', converted.length, converted)
             setInitialMessages(converted)
+          } else {
+            console.log('[v0] No stored messages found')
           }
         }
-      } catch {
-        // Failed to load history, continue with empty chat
+      } catch (err) {
+        console.log('[v0] Error loading history:', err)
       } finally {
         setIsLoadingHistory(false)
       }
     }
     loadHistory()
   }, [obraId])
+
+  console.log('[v0] ChatInterfaceInner mounted with initialMessages:', initialMessages.length, initialMessages)
 
   if (isLoadingHistory) {
     return (
@@ -112,6 +121,8 @@ function ChatInterfaceInner({
     initialMessages,
   })
 
+  console.log('[v0] useChat messages:', messages.length, 'status:', status)
+
   const isLoading = status === 'streaming' || status === 'submitted'
 
   // Save message to history
@@ -132,12 +143,18 @@ function ChatInterfaceInner({
 
   // Save new messages when they appear and are complete
   useEffect(() => {
+    console.log('[v0] Save effect - status:', status, 'messages:', messages.length)
     // Only check when not streaming (messages are complete)
     if (status === 'streaming' || status === 'submitted') return
     
     messages.forEach((message) => {
       // Skip if already saved
-      if (savedIdsRef.current.has(message.id)) return
+      if (savedIdsRef.current.has(message.id)) {
+        console.log('[v0] Skipping already saved message:', message.id)
+        return
+      }
+      
+      console.log('[v0] Processing message:', message.id, message.role, 'content type:', typeof message.content)
       
       // Extract text content
       const textContent = typeof message.content === 'string' 
@@ -149,7 +166,10 @@ function ChatInterfaceInner({
               .join('')
           : ''
       
+      console.log('[v0] Extracted text content length:', textContent.length)
+      
       if (textContent) {
+        console.log('[v0] Saving message:', message.id, message.role)
         savedIdsRef.current.add(message.id)
         saveMessage(message.role as 'user' | 'assistant', textContent)
       }
