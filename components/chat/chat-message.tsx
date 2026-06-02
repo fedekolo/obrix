@@ -9,6 +9,11 @@ interface ChatMessageProps {
 }
 
 function getMessageText(message: UIMessage): string {
+  // First check if content is a string (from history)
+  if (typeof message.content === 'string' && message.content) {
+    return message.content
+  }
+  // Then check parts (from streaming responses)
   if (!message.parts || !Array.isArray(message.parts)) return ''
   return message.parts
     .filter((p): p is { type: 'text'; text: string } => p.type === 'text')
