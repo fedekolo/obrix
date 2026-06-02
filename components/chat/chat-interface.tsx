@@ -159,20 +159,26 @@ function ChatInterfaceInner({
     messages.forEach((message) => {
       // Skip if already saved
       if (savedIdsRef.current.has(message.id)) {
-        console.log('[v0] Skipping already saved message:', message.id)
         return
       }
       
-      console.log('[v0] Processing message:', message.id, message.role, 'content:', message.content, 'parts:', message.parts)
+      // Log full message structure for debugging
+      console.log('[v0] Full message structure:', JSON.stringify(message, null, 2))
       
       // Extract text content - check content first, then parts
       let textContent = ''
       if (typeof message.content === 'string' && message.content) {
         textContent = message.content
       } else if (Array.isArray(message.parts)) {
+        // Try to extract text from parts - handle different part structures
         textContent = message.parts
-          .filter((p): p is { type: 'text'; text: string } => p.type === 'text' && 'text' in p)
-          .map(p => p.text)
+          .map(p => {
+            if (p.type === 'text' && 'text' in p) return p.text
+            // Some parts may have content directly
+            if (typeof p === 'string') return p
+            return ''
+          })
+          .filter(Boolean)
           .join('')
       }
       
@@ -182,6 +188,8 @@ function ChatInterfaceInner({
         console.log('[v0] Saving message:', message.id, message.role)
         savedIdsRef.current.add(message.id)
         saveMessage(message.role as 'user' | 'assistant', textContent)
+      } else {
+        console.log('[v0] No text content found for message:', message.id, message.role)
       }
     })
   }, [messages, status, saveMessage])
