@@ -23,44 +23,76 @@ interface StoredMessage {
   created_at: string
 }
 
+// Extended Message type with createdAt for date separators
+interface MessageWithDate extends Message {
+  createdAt?: string
+}
+
+// Helper to format date for separator
+function formatDateSeparator(dateStr: string): string {
+  const date = new Date(dateStr)
+  const today = new Date()
+  const yesterday = new Date(today)
+  yesterday.setDate(yesterday.getDate() - 1)
+  
+  const isToday = date.toDateString() === today.toDateString()
+  const isYesterday = date.toDateString() === yesterday.toDateString()
+  
+  if (isToday) return 'Hoy'
+  if (isYesterday) return 'Ayer'
+  
+  return date.toLocaleDateString('es-AR', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: date.getFullYear() !== today.getFullYear() ? 'numeric' : undefined,
+  })
+}
+
+// Date separator component
+function DateSeparator({ date }: { date: string }) {
+  return (
+    <div className="flex items-center gap-3 my-4">
+      <div className="flex-1 h-px bg-border" />
+      <span className="text-xs text-muted-foreground font-medium px-2">
+        {formatDateSeparator(date)}
+      </span>
+      <div className="flex-1 h-px bg-border" />
+    </div>
+  )
+}
+
 // Wrapper that loads history first
 export function ChatInterface({ obraId, sectores, rubros, tareas }: ChatInterfaceProps) {
   const [isLoadingHistory, setIsLoadingHistory] = useState(true)
-  const [initialMessages, setInitialMessages] = useState<Message[]>([])
+  const [initialMessages, setInitialMessages] = useState<MessageWithDate[]>([])
 
   // Load chat history on mount
   useEffect(() => {
     const loadHistory = async () => {
-      console.log('[v0] Loading chat history for obraId:', obraId)
       try {
         const res = await fetch(`/api/chat/history?obraId=${obraId}`)
-        console.log('[v0] History API response status:', res.status)
         if (res.ok) {
           const data = await res.json()
-          console.log('[v0] History API response data:', data)
           const storedMessages = data.messages
           if (storedMessages && storedMessages.length > 0) {
-            const converted: Message[] = storedMessages.map((m: StoredMessage) => ({
+            const converted: MessageWithDate[] = storedMessages.map((m: StoredMessage) => ({
               id: m.id,
               role: m.role,
               content: m.content,
+              createdAt: m.created_at,
             }))
-            console.log('[v0] Converted messages:', converted.length, converted)
             setInitialMessages(converted)
-          } else {
-            console.log('[v0] No stored messages found')
           }
         }
-      } catch (err) {
-        console.log('[v0] Error loading history:', err)
+      } catch {
+        // Failed to load history, continue with empty chat
       } finally {
         setIsLoadingHistory(false)
       }
     }
     loadHistory()
   }, [obraId])
-
-  console.log('[v0] ChatInterfaceInner mounted with initialMessages:', initialMessages.length, initialMessages)
 
   if (isLoadingHistory) {
     return (
@@ -89,7 +121,7 @@ function ChatInterfaceInner({
   rubros, 
   tareas,
   initialMessages,
-}: ChatInterfaceProps & { initialMessages: Message[] }) {
+}: ChatInterfaceProps & { initialMessages: MessageWithDate[] }) {
   const [isRecording, setIsRecording] = useState(false)
   const [isTranscribing, setIsTranscribing] = useState(false)
   const [pendingImages, setPendingImages] = useState<string[]>([])
@@ -124,15 +156,24 @@ function ChatInterfaceInner({
   const hasLoadedRef = useRef(false)
   useEffect(() => {
     if (!hasLoadedRef.current && initialMessages.length > 0) {
-      console.log('[v0] Setting initial messages via setMessages:', initialMessages.length)
       setMessages(initialMessages)
       hasLoadedRef.current = true
     }
   }, [initialMessages, setMessages])
 
-  console.log('[v0] useChat messages:', messages.length, 'status:', status)
-
   const isLoading = status === 'streaming' || status === 'submitted'
+
+  // Merge messages with dates for rendering
+  const messagesWithDates = useMemo(() => {
+    // Cast messages to include potential createdAt from history
+    return messages.map((msg, index) => {
+      const historyMsg = initialMessages.find(h => h.id === msg.id)
+      return {
+        ...msg,
+        createdAt: historyMsg?.createdAt || (index === 0 ? undefined : new Date().toISOString()),
+      } as MessageWithDate
+    })
+  }, [messages, initialMessages])
 
   // Save message to history
   const saveMessage = useCallback(async (role: 'user' | 'assistant', content: string) => {
@@ -152,7 +193,6 @@ function ChatInterfaceInner({
 
   // Save new messages when they appear and are complete
   useEffect(() => {
-    console.log('[v0] Save effect - status:', status, 'messages:', messages.length)
     // Only check when not streaming (messages are complete)
     if (status === 'streaming' || status === 'submitted') return
     
@@ -162,34 +202,32 @@ function ChatInterfaceInner({
         return
       }
       
-      // Log full message structure for debugging
-      console.log('[v0] Full message structure:', JSON.stringify(message, null, 2))
-      
-      // Extract text content - check content first, then parts
+      // Extract text content - check multiple sources
       let textContent = ''
+      
+      // 1. Check if content is a string
       if (typeof message.content === 'string' && message.content) {
         textContent = message.content
-      } else if (Array.isArray(message.parts)) {
-        // Try to extract text from parts - handle different part structures
+      }
+      // 2. Check parts array (AI SDK format)
+      else if (Array.isArray(message.parts)) {
         textContent = message.parts
           .map(p => {
             if (p.type === 'text' && 'text' in p) return p.text
-            // Some parts may have content directly
             if (typeof p === 'string') return p
             return ''
           })
           .filter(Boolean)
           .join('')
       }
-      
-      console.log('[v0] Extracted text content:', textContent.length, textContent.substring(0, 100))
+      // 3. For assistant messages, also check if there's a 'text' property directly
+      else if (message.role === 'assistant' && 'text' in message && typeof (message as { text?: string }).text === 'string') {
+        textContent = (message as { text: string }).text
+      }
       
       if (textContent) {
-        console.log('[v0] Saving message:', message.id, message.role)
         savedIdsRef.current.add(message.id)
         saveMessage(message.role as 'user' | 'assistant', textContent)
-      } else {
-        console.log('[v0] No text content found for message:', message.id, message.role)
       }
     })
   }, [messages, status, saveMessage])
@@ -302,7 +340,7 @@ function ChatInterfaceInner({
     <div className="flex flex-col h-full">
       {/* Messages area */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {messages.length === 0 ? (
+        {messagesWithDates.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center p-8">
             <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mb-4">
               <Send className="w-8 h-8 text-primary" />
@@ -322,9 +360,22 @@ function ChatInterfaceInner({
             </div>
           </div>
         ) : (
-          messages.map((message) => (
-            <ChatMessage key={message.id} message={message} />
-          ))
+          messagesWithDates.map((message, index) => {
+            // Check if we need a date separator
+            const currentDate = message.createdAt ? new Date(message.createdAt).toDateString() : null
+            const prevMessage = index > 0 ? messagesWithDates[index - 1] : null
+            const prevDate = prevMessage?.createdAt ? new Date(prevMessage.createdAt).toDateString() : null
+            const showDateSeparator = currentDate && currentDate !== prevDate
+            
+            return (
+              <div key={message.id}>
+                {showDateSeparator && message.createdAt && (
+                  <DateSeparator date={message.createdAt} />
+                )}
+                <ChatMessage message={message} />
+              </div>
+            )
+          })
         )}
         <div ref={messagesEndRef} />
       </div>
