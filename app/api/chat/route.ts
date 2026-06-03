@@ -1,4 +1,4 @@
-import { streamText, tool, convertToModelMessages } from 'ai'
+import { streamText, tool } from 'ai'
 import { createGroq } from '@ai-sdk/groq'
 import { z } from 'zod'
 import { createClient } from '@/lib/supabase/server'
@@ -31,14 +31,41 @@ interface RubroData {
   tareas?: TareaData[]
 }
 
+// Normalize messages to ensure they have the correct structure for AI SDK
+function normalizeMessages(messages: unknown[]): { role: string; content: string }[] {
+  return messages.map((msg: unknown) => {
+    const m = msg as { role?: string; content?: string; parts?: { type: string; text?: string }[] }
+    const role = m.role || 'user'
+    
+    // If content is already a string, use it directly
+    if (typeof m.content === 'string' && m.content) {
+      return { role, content: m.content }
+    }
+    
+    // If there are parts, extract text from them
+    if (Array.isArray(m.parts)) {
+      const textContent = m.parts
+        .filter((p) => p.type === 'text' && p.text)
+        .map((p) => p.text)
+        .join('')
+      return { role, content: textContent || '' }
+    }
+    
+    return { role, content: '' }
+  }).filter(m => m.content) // Remove empty messages
+}
+
 export async function POST(req: Request) {
-  const { messages, obraId, sectores, rubros, tareas } = await req.json() as {
+  const { messages: rawMessages, obraId, sectores, rubros, tareas } = await req.json() as {
     messages: unknown[]
     obraId: string
     sectores: SectorData[]
     rubros: RubroData[]
     tareas: TareaData[]
   }
+  
+  // Normalize messages to handle both history (content string) and streaming (parts) formats
+  const messages = normalizeMessages(rawMessages)
 
   const supabase = await createClient()
   
@@ -114,7 +141,7 @@ Responde en espanol, conciso y amigable.`
   const result = streamText({
     model: groq('llama-3.3-70b-versatile'),
     system: systemPrompt,
-    messages: await convertToModelMessages(messages),
+    messages: messages as { role: 'user' | 'assistant'; content: string }[],
     tools: {
       analizarTexto: tool({
         description: 'OBLIGATORIO: Usa esta herramienta PRIMERO cuando el usuario mencione un trabajo o avance. Analiza semanticamente el texto y determina la tarea mas probable.',
