@@ -85,24 +85,35 @@ function ToolCallDisplay({ tool }: { tool: ToolPart }) {
     return null
   }
 
-  // registrarAvance - single avance registered
-  if (toolName === 'registrarAvance' && output.avance) {
+  // registrarAvance - avance registered successfully
+  if (toolName === 'registrarAvance') {
+    if (output.success) {
+      return (
+        <div className="flex items-start gap-2 text-sm bg-green-500/10 text-green-700 dark:text-green-400 rounded-lg px-3 py-2">
+          <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0" />
+          <span className="whitespace-pre-wrap">{output.message}</span>
+        </div>
+      )
+    }
     return (
-      <div className="flex items-center gap-2 text-sm bg-green-500/10 text-green-700 dark:text-green-400 rounded-lg px-3 py-2">
-        <CheckCircle2 className="h-4 w-4" />
-        <span>{output.message}</span>
+      <div className="flex items-start gap-2 text-sm bg-destructive/10 text-destructive rounded-lg px-3 py-2">
+        <XCircle className="h-4 w-4 mt-0.5 shrink-0" />
+        <span>{output.message || 'Error al registrar'}</span>
       </div>
     )
   }
 
   // crearTarea - new task created
-  if (toolName === 'crearTarea' && output.tarea) {
-    return (
-      <div className="flex items-center gap-2 text-sm bg-blue-500/10 text-blue-700 dark:text-blue-400 rounded-lg px-3 py-2">
-        <CheckCircle2 className="h-4 w-4" />
-        <span>{output.message}</span>
-      </div>
-    )
+  if (toolName === 'crearTarea') {
+    if (output.success) {
+      return (
+        <div className="flex items-center gap-2 text-sm bg-blue-500/10 text-blue-700 dark:text-blue-400 rounded-lg px-3 py-2">
+          <CheckCircle2 className="h-4 w-4" />
+          <span>{output.message}</span>
+        </div>
+      )
+    }
+    return null
   }
 
   // consultarAvances - list of active avances

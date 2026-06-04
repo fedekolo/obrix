@@ -124,19 +124,25 @@ PASO 2 - Segun el resultado de analizarTexto:
 
 PASO 3 - Al registrar, SIEMPRE guarda el texto ORIGINAL completo del usuario en la descripcion
 
-=== IMPORTANTE ===
+=== MUY IMPORTANTE ===
+- SIEMPRE debes responder con texto DESPUES de usar cualquier herramienta
+- Cuando uses consultarAvances, muestra los resultados de forma clara y amigable
+- Cuando registres un avance, confirma lo que se registro
 - NO inventes tareas
 - NO registres sin usar analizarTexto primero
 - SIEMPRE guarda el texto original del usuario como descripcion
 - Entiende sinonimos: "enchufes" = "Teclas y tomas", "luces" = iluminacion
 - Si el usuario menciona multiples trabajos, procesalos uno por uno
 
+=== FORMATO AL MOSTRAR AVANCES ===
+Muestra los avances en una lista clara con fecha, sector, rubro, tarea y descripcion.
+
 === FORMATO AL REGISTRAR ===
 "Registrado en [SECTOR]:
 Rubro: [RUBRO]
 Tarea: [TAREA]"
 
-Responde en espanol, conciso y amigable.`
+Responde en espanol, conciso y amigable. NUNCA termines sin dar una respuesta de texto al usuario.`
 
   const result = streamText({
     model: groq('llama-3.3-70b-versatile'),
@@ -341,6 +347,8 @@ Responde en espanol, conciso y amigable.`
       }),
     },
     maxSteps: 5,
+    // Force the model to generate a text response after tool calls
+    toolChoice: 'auto',
   })
 
   return result.toUIMessageStreamResponse()
