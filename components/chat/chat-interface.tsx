@@ -193,8 +193,13 @@ function ChatInterfaceInner({
 
   // Save new messages when they appear and are complete
   useEffect(() => {
+    console.log('[v0] Save effect triggered - status:', status, 'messages count:', messages.length)
+    
     // Only check when not streaming (messages are complete)
-    if (status === 'streaming' || status === 'submitted') return
+    if (status === 'streaming' || status === 'submitted') {
+      console.log('[v0] Skipping save - status is', status)
+      return
+    }
     
     messages.forEach((message) => {
       // Skip if already saved
@@ -202,32 +207,43 @@ function ChatInterfaceInner({
         return
       }
       
+      console.log('[v0] Processing unsaved message:', message.id, message.role)
+      console.log('[v0] Message structure:', JSON.stringify(message, null, 2))
+      
       // Extract text content - check multiple sources
       let textContent = ''
       
       // 1. Check if content is a string
       if (typeof message.content === 'string' && message.content) {
         textContent = message.content
+        console.log('[v0] Found content as string:', textContent.substring(0, 50))
       }
       // 2. Check parts array (AI SDK format)
       else if (Array.isArray(message.parts)) {
+        console.log('[v0] Found parts array with', message.parts.length, 'parts')
         textContent = message.parts
           .map(p => {
+            console.log('[v0] Part:', JSON.stringify(p))
             if (p.type === 'text' && 'text' in p) return p.text
             if (typeof p === 'string') return p
             return ''
           })
           .filter(Boolean)
           .join('')
+        console.log('[v0] Extracted from parts:', textContent.substring(0, 50))
       }
       // 3. For assistant messages, also check if there's a 'text' property directly
       else if (message.role === 'assistant' && 'text' in message && typeof (message as { text?: string }).text === 'string') {
         textContent = (message as { text: string }).text
+        console.log('[v0] Found text property:', textContent.substring(0, 50))
       }
       
       if (textContent) {
+        console.log('[v0] Saving message:', message.id, message.role, 'content length:', textContent.length)
         savedIdsRef.current.add(message.id)
         saveMessage(message.role as 'user' | 'assistant', textContent)
+      } else {
+        console.log('[v0] No text content found for message:', message.id, message.role)
       }
     })
   }, [messages, status, saveMessage])
@@ -241,18 +257,24 @@ function ChatInterfaceInner({
     if (!inputValue.trim() && pendingImages.length === 0) return
 
     const messageContent = inputValue.trim()
+    console.log('[v0] Submitting message:', messageContent)
     setInputValue('')
     setPendingImages([])
 
-    await sendMessage({
-      text: messageContent,
-      ...(pendingImages.length > 0 && {
-        experimental_attachments: pendingImages.map(url => ({
-          contentType: 'image/jpeg',
-          url,
-        })),
-      }),
-    })
+    try {
+      await sendMessage({
+        text: messageContent,
+        ...(pendingImages.length > 0 && {
+          experimental_attachments: pendingImages.map(url => ({
+            contentType: 'image/jpeg',
+            url,
+          })),
+        }),
+      })
+      console.log('[v0] Message sent successfully')
+    } catch (err) {
+      console.log('[v0] Error sending message:', err)
+    }
   }
 
   const startRecording = async () => {
