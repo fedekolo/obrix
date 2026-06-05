@@ -1,11 +1,12 @@
 'use client'
 
 import type { UIMessage } from 'ai'
-import { Bot, User, CheckCircle2, XCircle, Loader2 } from 'lucide-react'
+import { Bot, User, CheckCircle2, XCircle, Loader2, Mic } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 interface ChatMessageProps {
   message: UIMessage
+  isAudioMessage?: boolean
 }
 
 function getMessageText(message: UIMessage): string {
@@ -211,7 +212,7 @@ function ToolCallDisplay({ tool }: { tool: ToolPart }) {
   return null
 }
 
-export function ChatMessage({ message }: ChatMessageProps) {
+export function ChatMessage({ message, isAudioMessage }: ChatMessageProps) {
   const isUser = message.role === 'user'
   const text = getMessageText(message)
   const toolCalls = getToolCalls(message)
@@ -258,6 +259,11 @@ export function ChatMessage({ message }: ChatMessageProps) {
               ? 'bg-primary text-primary-foreground' 
               : 'bg-muted'
           )}>
+            {isAudioMessage && isUser && (
+              <span className="inline-flex items-center gap-1 mr-2 text-primary-foreground/70">
+                <Mic className="w-3 h-3" />
+              </span>
+            )}
             {text}
           </div>
         )}
