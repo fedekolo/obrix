@@ -125,6 +125,8 @@ function ChatInterfaceInner({
   const [isRecording, setIsRecording] = useState(false)
   const [isTranscribing, setIsTranscribing] = useState(false)
   const [pendingImages, setPendingImages] = useState<string[]>([])
+  const [audioMessageIds, setAudioMessageIds] = useState<Set<string>>(new Set())
+  const pendingAudioRef = useRef(false)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -246,7 +248,17 @@ function ChatInterfaceInner({
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+    
+    // Check if we need to mark the last user message as audio
+    if (pendingAudioRef.current) {
+      const userMessages = messages.filter(m => m.role === 'user')
+      const lastUserMsg = userMessages[userMessages.length - 1]
+      if (lastUserMsg && !audioMessageIds.has(lastUserMsg.id)) {
+        setAudioMessageIds(prev => new Set(prev).add(lastUserMsg.id))
+        pendingAudioRef.current = false
+      }
+    }
+  }, [messages, audioMessageIds])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -311,11 +323,19 @@ function ChatInterfaceInner({
 
       if (res.ok) {
         const { text } = await res.json()
-        setInputValue((prev) => (prev ? `${prev} ${text}` : text))
-        textareaRef.current?.focus()
+        if (text && text.trim()) {
+          // Mark that we're sending an audio message
+          pendingAudioRef.current = true
+          
+          // Send the message directly
+          await sendMessage({
+            text: text.trim(),
+          })
+        }
       }
     } catch {
       // Transcription failed
+      pendingAudioRef.current = false
     } finally {
       setIsTranscribing(false)
     }
@@ -384,7 +404,10 @@ function ChatInterfaceInner({
                 {showDateSeparator && message.createdAt && (
                   <DateSeparator date={message.createdAt} />
                 )}
-                <ChatMessage message={message} />
+                <ChatMessage 
+                  message={message} 
+                  isAudioMessage={audioMessageIds.has(message.id)}
+                />
               </div>
             )
           })
