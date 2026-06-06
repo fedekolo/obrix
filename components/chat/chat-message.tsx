@@ -9,6 +9,107 @@ interface ChatMessageProps {
   isAudioMessage?: boolean
 }
 
+// Renders assistant text with visual hierarchy:
+// - Unidad title (largest)
+// - Rubro headers (medium)
+// - Tarea items (smallest, with check for finalizada)
+function FormattedAssistantText({ text }: { text: string }) {
+  const lines = text.split('\n')
+
+  // Detect whether this looks like a structured avances response
+  const hasStructure = /(\*\*\s*)?unidad\s*:/i.test(text)
+
+  if (!hasStructure) {
+    return <span className="whitespace-pre-wrap">{text}</span>
+  }
+
+  const elements: React.ReactNode[] = []
+
+  lines.forEach((rawLine, i) => {
+    const line = rawLine.trim()
+    if (!line) {
+      elements.push(<div key={`sp-${i}`} className="h-1.5" />)
+      return
+    }
+
+    // Unidad title: "**Unidad: 503**" or "Unidad: 503"
+    const unidadMatch = line.match(/^\*{0,2}\s*unidad\s*:\s*(.+?)\s*\*{0,2}$/i)
+    if (unidadMatch) {
+      elements.push(
+        <div
+          key={`u-${i}`}
+          className="flex items-center gap-2 mt-1 mb-1.5 first:mt-0"
+        >
+          <span className="text-base font-bold text-foreground">
+            Unidad {unidadMatch[1].replace(/^unidad\s+/i, '')}
+          </span>
+        </div>
+      )
+      return
+    }
+
+    // Tarea item: "- paredes: finalizada" (starts with - or •)
+    const tareaMatch = line.match(/^[-•]\s*(.+)$/)
+    if (tareaMatch) {
+      const content = tareaMatch[1]
+      const colonIdx = content.indexOf(':')
+      let taskName = content
+      let desc = ''
+      if (colonIdx !== -1) {
+        taskName = content.slice(0, colonIdx).trim()
+        desc = content.slice(colonIdx + 1).trim()
+      }
+      const isDone = /finalizad|✓|complet|termina/i.test(desc)
+      const cleanDesc = desc.replace(/✓/g, '').trim()
+      elements.push(
+        <div key={`t-${i}`} className="flex items-start gap-1.5 pl-3 py-0.5">
+          <span className="text-muted-foreground mt-1.5 h-1 w-1 shrink-0 rounded-full bg-muted-foreground/50" />
+          <span className="text-sm">
+            <span className="font-medium text-foreground/90">{taskName}</span>
+            {desc && (
+              <>
+                <span className="text-muted-foreground">: </span>
+                {isDone ? (
+                  <span className="inline-flex items-center gap-1 text-green-600 dark:text-green-400 font-medium">
+                    {cleanDesc || 'finalizada'}
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                  </span>
+                ) : (
+                  <span className="text-foreground/80">{cleanDesc}</span>
+                )}
+              </>
+            )}
+          </span>
+        </div>
+      )
+      return
+    }
+
+    // Rubro header: line ending with ":" (no bullet)
+    const rubroMatch = line.match(/^\*{0,2}\s*(.+?)\s*:\s*\*{0,2}$/)
+    if (rubroMatch) {
+      elements.push(
+        <div
+          key={`r-${i}`}
+          className="text-sm font-semibold text-primary mt-2 mb-0.5"
+        >
+          {rubroMatch[1]}
+        </div>
+      )
+      return
+    }
+
+    // Plain text line
+    elements.push(
+      <div key={`p-${i}`} className="text-sm whitespace-pre-wrap">
+        {line}
+      </div>
+    )
+  })
+
+  return <div className="flex flex-col">{elements}</div>
+}
+
 function getMessageText(message: UIMessage): string {
   // First check if content is a string (from history)
   if (typeof message.content === 'string' && message.content) {
@@ -238,9 +339,9 @@ export function ChatMessage({ message, isAudioMessage }: ChatMessageProps) {
         )}
         {text && (
           <div className={cn(
-            'rounded-lg px-4 py-2 text-sm whitespace-pre-wrap',
+            'rounded-lg px-4 py-2 text-sm',
             isUser 
-              ? 'bg-primary text-primary-foreground' 
+              ? 'bg-primary text-primary-foreground whitespace-pre-wrap' 
               : 'bg-muted'
           )}>
             {isAudioMessage && isUser && (
@@ -248,7 +349,7 @@ export function ChatMessage({ message, isAudioMessage }: ChatMessageProps) {
                 <Mic className="w-3 h-3" />
               </span>
             )}
-            {text}
+            {isUser ? text : <FormattedAssistantText text={text} />}
           </div>
         )}
         {toolCalls.map((tool) => (
