@@ -1,4 +1,4 @@
-import { streamText, tool } from 'ai'
+import { streamText, tool, stepCountIs } from 'ai'
 import { createGroq } from '@ai-sdk/groq'
 import { z } from 'zod'
 import { createClient } from '@/lib/supabase/server'
@@ -379,9 +379,8 @@ Responde en espanol, conciso y amigable. NUNCA termines sin dar una respuesta de
         },
       }),
     },
-    maxSteps: 5,
-    // Force the model to generate a text response after tool calls
-    toolChoice: 'auto',
+    // AI SDK v6: enable multi-step so the model generates a text response after tool calls
+    stopWhen: stepCountIs(5),
   })
 
   return result.toUIMessageStreamResponse()
