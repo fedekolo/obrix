@@ -117,27 +117,11 @@ function ToolCallDisplay({ tool }: { tool: ToolPart }) {
     return null
   }
 
-  // consultarAvances - list of active avances
-  if (toolName === 'consultarAvances' && output.avances) {
-    if (output.avances.length === 0) {
-      return (
-        <div className="bg-muted rounded-lg px-3 py-2 text-sm">
-          No hay avances registrados.
-        </div>
-      )
-    }
-    return (
-      <div className="bg-muted rounded-lg px-3 py-2 text-sm space-y-2">
-        <div className="font-medium">{output.message}</div>
-        <div className="space-y-1">
-          {output.avances.slice(0, 15).map((a, i) => (
-            <div key={i} className="text-xs border-l-2 border-primary/30 pl-2">
-              <span className="text-muted-foreground">{a.fecha}</span> - <span className="font-medium">{a.sector}</span> / {a.tarea || a.rubro}: {a.descripcion}
-            </div>
-          ))}
-        </div>
-      </div>
-    )
+  // consultarAvances - the LLM formats the response as grouped text,
+  // so we don't render the raw card display. Return null to let the
+  // assistant's text response (grouped by unidad/rubro/tarea) show.
+  if (toolName === 'consultarAvances') {
+    return null
   }
 
   // consultarHistorial - history of a task+sector
