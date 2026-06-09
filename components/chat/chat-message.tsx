@@ -1,8 +1,15 @@
 'use client'
 
+import { useState } from 'react'
 import type { UIMessage } from 'ai'
-import { Bot, User, CheckCircle2, XCircle, Loader2, Mic } from 'lucide-react'
+import { Bot, User, CheckCircle2, XCircle, Loader2, Mic, ImageIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog'
 
 interface ChatMessageProps {
   message: UIMessage
@@ -142,7 +149,7 @@ interface ToolPart {
     sugerencias?: Array<{ rubro: string; rubroId: string; tareas: { id: string; nombre: string }[] }>
     sugerencia_crear?: string
     rubros_disponibles?: Array<{ id: string; nombre: string }>
-    avances?: Array<{ fecha: string; sector?: string; tarea?: string; rubro?: string; descripcion: string }>
+    avances?: Array<{ fecha: string; sector?: string; tarea?: string; rubro?: string; descripcion: string; imagenes?: Array<{ url: string; nombre: string | null }> }>
     historial?: Array<{ fecha: string; descripcion: string; estado: string }>
     sectores?: Array<{ id: string; nombre: string; tipo: string }>
     rubros?: Array<{ id: string; nombre: string }>
@@ -153,6 +160,48 @@ function getToolCalls(message: UIMessage): ToolPart[] {
   if (!message.parts || !Array.isArray(message.parts)) return []
   return message.parts.filter(
     (p): p is ToolPart => typeof p.type === 'string' && p.type.startsWith('tool-')
+  )
+}
+
+// A link that opens an associated avance image in a popup dialog
+function AvanceImageLink({
+  images,
+  label,
+}: {
+  images: Array<{ url: string; nombre: string | null }>
+  label: string
+}) {
+  const [openIndex, setOpenIndex] = useState<number | null>(null)
+  if (!images || images.length === 0) return null
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-0.5">
+      {images.map((img, i) => (
+        <Dialog
+          key={i}
+          open={openIndex === i}
+          onOpenChange={(o) => setOpenIndex(o ? i : null)}
+        >
+          <DialogTrigger asChild>
+            <button
+              type="button"
+              className="inline-flex items-center gap-1 text-xs text-primary underline underline-offset-2 hover:opacity-80"
+            >
+              <ImageIcon className="h-3 w-3" />
+              {images.length > 1 ? `${label} ${i + 1}` : label}
+            </button>
+          </DialogTrigger>
+          <DialogContent className="max-w-2xl p-2">
+            <DialogTitle className="sr-only">{img.nombre || label}</DialogTitle>
+            <img
+              src={img.url || "/placeholder.svg"}
+              alt={img.nombre || label}
+              className="w-full h-auto rounded-md max-h-[80vh] object-contain"
+            />
+          </DialogContent>
+        </Dialog>
+      ))}
+    </div>
   )
 }
 
@@ -218,11 +267,29 @@ function ToolCallDisplay({ tool }: { tool: ToolPart }) {
     return null
   }
 
-  // consultarAvances - the LLM formats the response as grouped text,
-  // so we don't render the raw card display. Return null to let the
-  // assistant's text response (grouped by unidad/rubro/tarea) show.
+  // consultarAvances - the LLM formats the textual response grouped by unidad.
+  // Here we only render links to any associated images (shown as a popup),
+  // since images must not be embedded directly in the chat bubble.
   if (toolName === 'consultarAvances') {
-    return null
+    const withImages = (output.avances || []).filter(
+      (a) => a.imagenes && a.imagenes.length > 0
+    )
+    if (withImages.length === 0) return null
+    return (
+      <div className="bg-muted/50 rounded-lg px-3 py-2 text-sm space-y-1.5">
+        <div className="text-xs font-medium text-muted-foreground">
+          Imagenes asociadas
+        </div>
+        {withImages.map((a, i) => (
+          <div key={i} className="flex flex-col">
+            <span className="text-xs text-foreground/80">
+              {a.sector ? `${a.sector} — ` : ''}{a.tarea || a.rubro}
+            </span>
+            <AvanceImageLink images={a.imagenes!} label="Ver imagen" />
+          </div>
+        ))}
+      </div>
+    )
   }
 
   // consultarHistorial - history of a task+sector

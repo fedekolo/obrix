@@ -287,6 +287,27 @@ function ChatInterfaceInner({
     }
   }, [messages, audioMessageIds])
 
+  // Clear pending images once the assistant reports them as associated to an avance
+  useEffect(() => {
+    const associatedIds = new Set<string>()
+    for (const m of messages) {
+      if (m.role !== 'assistant') continue
+      for (const part of m.parts || []) {
+        // Tool output parts carry the registrarAvance result
+        const output = (part as { output?: { imagenes_asociadas?: string[] } }).output
+        if (output?.imagenes_asociadas) {
+          output.imagenes_asociadas.forEach(id => associatedIds.add(id))
+        }
+      }
+    }
+    if (associatedIds.size > 0) {
+      setPendingImages(prev => {
+        const next = prev.filter(img => !associatedIds.has(img.id))
+        return next.length === prev.length ? prev : next
+      })
+    }
+  }, [messages])
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!inputValue.trim() && pendingImages.length === 0) return
@@ -366,8 +387,9 @@ function ChatInterfaceInner({
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files
-    if (!files) return
+    if (!files || files.length === 0) return
 
+    setIsUploading(true)
     for (const file of Array.from(files)) {
       const formData = new FormData()
       formData.append('file', file)
@@ -376,13 +398,22 @@ function ChatInterfaceInner({
       try {
         const res = await fetch('/api/upload', { method: 'POST', body: formData })
         if (res.ok) {
-          const { url } = await res.json()
-          setPendingImages(prev => [...prev, url])
+          const { url, pathname } = await res.json()
+          // Short stable id used to reference this image to the assistant
+          const imgNumber = pendingImagesRef.current.length + 1
+          const newImage: PendingImage = {
+            id: `img${imgNumber}-${Date.now().toString(36)}`,
+            url,
+            pathname,
+            nombre: file.name,
+          }
+          setPendingImages(prev => [...prev, newImage])
         }
       } catch {
         // Upload failed
       }
     }
+    setIsUploading(false)
 
     e.target.value = ''
   }
@@ -442,12 +473,17 @@ function ChatInterfaceInner({
       {pendingImages.length > 0 && (
         <div className="px-4 py-2 border-t bg-muted/30">
           <div className="flex gap-2 overflow-x-auto">
-            {pendingImages.map((url, i) => (
-              <div key={i} className="relative shrink-0">
-                <img src={url} alt="" className="h-16 w-16 object-cover rounded-md" />
+            {pendingImages.map((img, i) => (
+              <div key={img.id} className="relative shrink-0">
+                <img src={img.url || "/placeholder.svg"} alt={img.nombre} className="h-16 w-16 object-cover rounded-md" />
+                <span className="absolute bottom-0 left-0 right-0 bg-foreground/70 text-background text-[10px] text-center rounded-b-md">
+                  Imagen {i + 1}
+                </span>
                 <button
+                  type="button"
                   onClick={() => removePendingImage(i)}
                   className="absolute -top-1 -right-1 w-5 h-5 bg-destructive text-destructive-foreground rounded-full text-xs flex items-center justify-center"
+                  aria-label={`Quitar imagen ${i + 1}`}
                 >
                   x
                 </button>
@@ -468,15 +504,41 @@ function ChatInterfaceInner({
             className="hidden"
             onChange={handleImageUpload}
           />
-          <Button
-            type="button"
-            variant="outline"
-            size="icon"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={isLoading}
-          >
-            <ImagePlus className="w-4 h-4" />
-          </Button>
+          <input
+            ref={cameraInputRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            className="hidden"
+            onChange={handleImageUpload}
+          />
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                disabled={isLoading || isUploading}
+                aria-label="Agregar imagen"
+              >
+                {isUploading ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <ImagePlus className="w-4 h-4" />
+                )}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              <DropdownMenuItem onSelect={() => cameraInputRef.current?.click()}>
+                <Camera className="w-4 h-4 mr-2" />
+                Sacar foto
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => fileInputRef.current?.click()}>
+                <ImageIcon className="w-4 h-4 mr-2" />
+                Elegir de galeria
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Button
             type="button"
             variant={isRecording ? 'destructive' : 'outline'}
