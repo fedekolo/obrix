@@ -1,13 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 
-const PAGE_SIZE = 20
-
-// GET - Load chat history for a user in an obra (paginated, newest first)
+// GET - Load chat history for a user in an obra
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const obraId = searchParams.get('obraId')
-  const offset = parseInt(searchParams.get('offset') || '0', 10)
 
   if (!obraId) {
     return NextResponse.json({ error: 'obraId required' }, { status: 400 })
@@ -20,26 +17,19 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  // Fetch one extra row to know if there are more messages to load
-  const { data: rows, error } = await supabase
+  const { data: messages, error } = await supabase
     .from('chat_messages')
     .select('*')
     .eq('obra_id', obraId)
     .eq('user_id', user.id)
-    .order('created_at', { ascending: false })
-    .range(offset, offset + PAGE_SIZE) // PAGE_SIZE + 1 rows
+    .order('created_at', { ascending: true })
+    .limit(100) // Last 100 messages
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 
-  const hasMore = (rows?.length || 0) > PAGE_SIZE
-  // Drop the extra row used for the hasMore check
-  const pageRows = hasMore ? rows!.slice(0, PAGE_SIZE) : (rows || [])
-  // Return in chronological order (oldest first) for rendering
-  const messages = pageRows.slice().reverse()
-
-  return NextResponse.json({ messages, hasMore })
+  return NextResponse.json({ messages })
 }
 
 // POST - Save a new message

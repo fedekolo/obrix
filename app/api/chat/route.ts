@@ -55,17 +55,25 @@ function normalizeMessages(messages: unknown[]): { role: string; content: string
   }).filter(m => m.content) // Remove empty messages
 }
 
+interface ImagenPendiente {
+  id: string
+  pathname: string
+  nombre?: string
+}
+
 export async function POST(req: Request) {
-  const { messages: rawMessages, obraId, sectores, rubros, tareas } = await req.json() as {
+  const { messages: rawMessages, obraId, sectores, rubros, tareas, imagenesPendientes } = await req.json() as {
     messages: unknown[]
     obraId: string
     sectores: SectorData[]
     rubros: RubroData[]
     tareas: TareaData[]
+    imagenesPendientes?: ImagenPendiente[]
   }
   
   // Normalize messages to handle both history (content string) and streaming (parts) formats
   const messages = normalizeMessages(rawMessages)
+  const pendingImages: ImagenPendiente[] = Array.isArray(imagenesPendientes) ? imagenesPendientes : []
 
   const supabase = await createClient()
   
@@ -103,6 +111,11 @@ export async function POST(req: Request) {
     ? rubrosWithTareas.join('\n')
     : '(No hay rubros configurados. Pide al usuario que los configure primero.)'
 
+  // Build pending images context
+  const imagenesContext = pendingImages.length > 0
+    ? `\n\nIMAGENES ADJUNTADAS EN ESTE MENSAJE (${pendingImages.length}):\n${pendingImages.map((img, i) => `- Imagen ${i + 1} (ID: ${img.id})${img.nombre ? ` "${img.nombre}"` : ''}`).join('\n')}`
+    : ''
+
   const systemPrompt = `Eres un asistente inteligente de obra que registra avances de construccion. Obra: "${obra.nombre}".
 Debes comportarte como un capataz experimentado que entiende el lenguaje informal de obra.
 
@@ -110,7 +123,15 @@ SECTORES DISPONIBLES:
 ${sectoresList}
 
 RUBROS Y TAREAS DISPONIBLES:
-${rubrosList}
+${rubrosList}${imagenesContext}
+
+=== MANEJO DE IMAGENES ===
+Cuando el usuario adjunta imagenes (ver "IMAGENES ADJUNTADAS EN ESTE MENSAJE"):
+- Las imagenes se asocian a un avance usando el parametro "imagen_ids" de registrarAvance.
+- Si el usuario reporta UN SOLO avance junto con la/las imagen/es: asocia TODAS las imagenes a ese avance automaticamente (pasa todos los IDs en imagen_ids).
+- Si el usuario reporta MULTIPLES avances y hay imagenes: NO adivines. PREGUNTA al usuario a cual avance corresponde cada imagen, refiriendote a ellas como "Imagen 1", "Imagen 2", etc. Recien cuando el usuario aclare, registra cada avance con su imagen_ids correspondiente.
+- Si hay imagenes adjuntas pero el usuario NO menciono ningun trabajo/avance: preguntale a que avance queres asociar la/las imagen/es.
+- NUNCA descartes una imagen adjunta sin asociarla o sin preguntar.
 
 === FLUJO DE TRABAJO OBLIGATORIO ===
 
@@ -169,6 +190,7 @@ Electricidad:
 - tomas y teclas: se montaron dos nada mas
 
 NO incluyas fecha/hora a menos que el usuario la pida especificamente.
+NO incluyas enlaces ni URLs de imagenes en tu texto: la interfaz muestra automaticamente un enlace "Imagen asociada" debajo del avance correspondiente. Solo podes mencionar en palabras que un avance tiene una foto si es relevante.
 
 === FORMATO AL REGISTRAR ===
 "Registrado en [SECTOR]:
@@ -219,13 +241,14 @@ Responde en espanol, conciso y amigable. NUNCA termines sin dar una respuesta de
       }),
 
       registrarAvance: tool({
-        description: 'Registra UN avance de obra. SOLO usar cuando el nombre de la tarea coincide EXACTAMENTE con lo que dijo el usuario, o cuando el usuario confirmo la tarea.',
+        description: 'Registra UN avance de obra. SOLO usar cuando el nombre de la tarea coincide EXACTAMENTE con lo que dijo el usuario, o cuando el usuario confirmo la tarea. Si hay imagenes adjuntas que corresponden a este avance, pasa sus IDs en imagen_ids.',
         inputSchema: z.object({
           sector_id: z.string().describe('ID del sector'),
           tarea_id: z.string().describe('ID de la tarea'),
           descripcion: z.string().describe('Descripcion breve del avance'),
+          imagen_ids: z.array(z.string()).optional().describe('IDs de las imagenes adjuntas que corresponden a este avance (de la lista IMAGENES ADJUNTADAS)'),
         }),
-        execute: async ({ sector_id, tarea_id, descripcion }) => {
+        execute: async ({ sector_id, tarea_id, descripcion, imagen_ids }) => {
           try {
             const sector = sectores.find((s) => s.id === sector_id)
             const tarea = tareas?.find((t) => t.id === tarea_id)
@@ -262,9 +285,35 @@ Responde en espanol, conciso y amigable. NUNCA termines sin dar una respuesta de
               return { success: false, message: `Error: ${error.message}` }
             }
 
+            // Associate any pending images with this avance
+            let imagenesAsociadas = 0
+            const idsAsociados: string[] = []
+            if (imagen_ids && imagen_ids.length > 0 && data) {
+              const toAssociate = pendingImages.filter((img) => imagen_ids.includes(img.id))
+              if (toAssociate.length > 0) {
+                const rows = toAssociate.map((img) => ({
+                  avance_id: data.id,
+                  tipo: 'imagen' as const,
+                  blob_pathname: img.pathname,
+                  nombre_original: img.nombre || null,
+                }))
+                const { error: archErr } = await supabase.from('archivos').insert(rows)
+                if (!archErr) {
+                  imagenesAsociadas = toAssociate.length
+                  idsAsociados.push(...toAssociate.map((img) => img.id))
+                }
+              }
+            }
+
+            const imgMsg = imagenesAsociadas > 0
+              ? `\n${imagenesAsociadas} imagen(es) asociada(s).`
+              : ''
+
             return {
               success: true,
-              message: `Registrado en ${sector.nombre}:\nRubro: ${rubro?.nombre || 'Sin rubro'}\nTarea: ${tarea.nombre}`,
+              message: `Registrado en ${sector.nombre}:\nRubro: ${rubro?.nombre || 'Sin rubro'}\nTarea: ${tarea.nombre}${imgMsg}`,
+              // IDs the client should clear from its pending images list
+              imagenes_asociadas: idsAsociados,
             }
           } catch (err) {
             return { success: false, message: `Error inesperado: ${err}` }
@@ -316,7 +365,7 @@ Responde en espanol, conciso y amigable. NUNCA termines sin dar una respuesta de
           try {
             let query = supabase
               .from('avances')
-              .select(`*, sectores (nombre), rubros (nombre), tareas (nombre)`)
+              .select(`*, sectores (nombre), rubros (nombre), tareas (nombre), archivos (id, tipo, blob_pathname, nombre_original)`)
               .eq('obra_id', obraId)
               .eq('archivado', false)
               .order('created_at', { ascending: false })
@@ -329,12 +378,19 @@ Responde en espanol, conciso y amigable. NUNCA termines sin dar una respuesta de
             if (error) return { success: false, message: `Error: ${error.message}` }
             if (!data?.length) return { success: true, message: 'No hay avances registrados.', avances: [] }
 
+            interface ArchivoRow {
+              id: string
+              tipo: string
+              blob_pathname: string
+              nombre_original: string | null
+            }
             interface AvanceRow {
               created_at: string
               descripcion: string
               sectores?: { nombre: string } | null
               rubros?: { nombre: string } | null
               tareas?: { nombre: string } | null
+              archivos?: ArchivoRow[] | null
             }
 
             return {
@@ -346,6 +402,12 @@ Responde en espanol, conciso y amigable. NUNCA termines sin dar una respuesta de
                 tarea: a.tareas?.nombre,
                 rubro: a.rubros?.nombre,
                 descripcion: a.descripcion,
+                imagenes: (a.archivos || [])
+                  .filter((f) => f.tipo === 'imagen')
+                  .map((f) => ({
+                    url: `/api/file?pathname=${encodeURIComponent(f.blob_pathname)}`,
+                    nombre: f.nombre_original,
+                  })),
               })),
             }
           } catch (err) {
