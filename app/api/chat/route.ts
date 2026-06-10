@@ -74,6 +74,10 @@ export async function POST(req: Request) {
   // Normalize messages to handle both history (content string) and streaming (parts) formats
   const messages = normalizeMessages(rawMessages)
   const pendingImages: ImagenPendiente[] = Array.isArray(imagenesPendientes) ? imagenesPendientes : []
+  console.log("[v0] POST /api/chat - pendingImages recibidas:", JSON.stringify(pendingImages))
+  // Mutable pool of images not yet associated during this request (avoids
+  // double-attaching the same image across multiple registrarAvance calls).
+  const imagenesDisponibles: ImagenPendiente[] = [...pendingImages]
 
   const supabase = await createClient()
   
@@ -250,6 +254,7 @@ Responde en espanol, conciso y amigable. NUNCA termines sin dar una respuesta de
         }),
         execute: async ({ sector_id, tarea_id, descripcion, imagen_ids }) => {
           try {
+            console.log("[v0] registrarAvance - imagen_ids del modelo:", JSON.stringify(imagen_ids), "| pendingImages disponibles:", JSON.stringify(pendingImages.map(p => p.id)))
             const sector = sectores.find((s) => s.id === sector_id)
             const tarea = tareas?.find((t) => t.id === tarea_id)
             const rubro = tarea ? rubros.find((r) => r.id === tarea.rubro_id) : null
@@ -285,11 +290,21 @@ Responde en espanol, conciso y amigable. NUNCA termines sin dar una respuesta de
               return { success: false, message: `Error: ${error.message}` }
             }
 
-            // Associate any pending images with this avance
+            // Associate pending images with this avance.
+            // Prefer the IDs the model selected; if it registered an avance
+            // without specifying images but there are pending ones available,
+            // fall back to attaching all remaining images so they are never lost.
             let imagenesAsociadas = 0
             const idsAsociados: string[] = []
-            if (imagen_ids && imagen_ids.length > 0 && data) {
-              const toAssociate = pendingImages.filter((img) => imagen_ids.includes(img.id))
+            if (data && imagenesDisponibles.length > 0) {
+              let toAssociate: ImagenPendiente[]
+              if (imagen_ids && imagen_ids.length > 0) {
+                toAssociate = imagenesDisponibles.filter((img) => imagen_ids.includes(img.id))
+              } else {
+                // Fallback: model didn't pass IDs, attach all remaining images
+                toAssociate = [...imagenesDisponibles]
+              }
+              console.log("[v0] registrarAvance - imagenes a asociar:", JSON.stringify(toAssociate.map(i => i.id)))
               if (toAssociate.length > 0) {
                 const rows = toAssociate.map((img) => ({
                   avance_id: data.id,
@@ -298,9 +313,16 @@ Responde en espanol, conciso y amigable. NUNCA termines sin dar una respuesta de
                   nombre_original: img.nombre || null,
                 }))
                 const { error: archErr } = await supabase.from('archivos').insert(rows)
-                if (!archErr) {
+                if (archErr) {
+                  console.log("[v0] registrarAvance - error insertando archivos:", archErr.message)
+                } else {
                   imagenesAsociadas = toAssociate.length
                   idsAsociados.push(...toAssociate.map((img) => img.id))
+                  // Remove associated images from the available pool
+                  for (const img of toAssociate) {
+                    const idx = imagenesDisponibles.findIndex((p) => p.id === img.id)
+                    if (idx !== -1) imagenesDisponibles.splice(idx, 1)
+                  }
                 }
               }
             }
