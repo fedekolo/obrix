@@ -204,8 +204,14 @@ Tarea: [TAREA]"
 Responde en espanol, conciso y amigable. NUNCA termines sin dar una respuesta de texto al usuario.`
 
   const result = streamText({
-    model: groq('llama-3.3-70b-versatile'),
+    // kimi-k2-instruct is far more reliable for tool calling than
+    // llama-3.3-70b-versatile, which frequently malforms tool call names
+    // (e.g. embedding args into the tool name) and breaks the stream.
+    model: groq('moonshotai/kimi-k2-instruct-0905'),
     system: systemPrompt,
+    onError: ({ error }) => {
+      console.log('[v0] streamText onError:', error instanceof Error ? error.message : JSON.stringify(error))
+    },
     messages: messages as { role: 'user' | 'assistant'; content: string }[],
     tools: {
       analizarTexto: tool({
@@ -467,5 +473,12 @@ Responde en espanol, conciso y amigable. NUNCA termines sin dar una respuesta de
     stopWhen: stepCountIs(5),
   })
 
-  return result.toUIMessageStreamResponse()
+  return result.toUIMessageStreamResponse({
+    onError: (error) => {
+      // Surface a readable message to the client instead of leaving it
+      // stuck in a "thinking" state when the model/stream fails.
+      console.log('[v0] toUIMessageStreamResponse onError:', error instanceof Error ? error.message : JSON.stringify(error))
+      return 'Hubo un problema procesando tu mensaje. Por favor, intenta reformularlo o envialo de nuevo.'
+    },
+  })
 }

@@ -177,8 +177,11 @@ function ChatInterfaceInner({
     }),
   }), [obraId, sectores, rubros, tareas])
 
-  const { messages, sendMessage, status, setMessages } = useChat({ 
+  const { messages, sendMessage, status, setMessages, error } = useChat({ 
     transport,
+    onError: (err) => {
+      console.log('[v0] useChat onError:', err?.message)
+    },
   })
 
   // Load initial messages into useChat on mount
@@ -468,6 +471,17 @@ function ChatInterfaceInner({
         )}
         <div ref={messagesEndRef} />
       </div>
+
+      {/* Error banner - shown if the assistant stream fails */}
+      {error && (
+        <div className="px-4 py-2 border-t bg-destructive/10">
+          <div className="flex items-center justify-between gap-2 max-w-3xl mx-auto">
+            <span className="text-sm text-destructive">
+              Hubo un problema al procesar tu mensaje. Intenta enviarlo de nuevo.
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Pending images preview */}
       {pendingImages.length > 0 && (
