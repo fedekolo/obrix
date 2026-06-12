@@ -204,10 +204,9 @@ Tarea: [TAREA]"
 Responde en espanol, conciso y amigable. NUNCA termines sin dar una respuesta de texto al usuario.`
 
   const result = streamText({
-    // kimi-k2-instruct is far more reliable for tool calling than
-    // llama-3.3-70b-versatile, which frequently malforms tool call names
-    // (e.g. embedding args into the tool name) and breaks the stream.
-    model: groq('moonshotai/kimi-k2-instruct-0905'),
+    // gpt-oss-120b is a Groq production model with reliable tool calling,
+    // avoiding the malformed-tool-name bug seen with llama-3.3-70b-versatile.
+    model: groq('openai/gpt-oss-120b'),
     system: systemPrompt,
     onError: ({ error }) => {
       console.log('[v0] streamText onError:', error instanceof Error ? error.message : JSON.stringify(error))
