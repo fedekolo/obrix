@@ -1,19 +1,51 @@
 'use client'
 
+import { useState } from 'react'
 import type { UIMessage } from 'ai'
-import { Bot, User, CheckCircle2, XCircle, Loader2, Mic } from 'lucide-react'
+import { Bot, User, CheckCircle2, XCircle, Loader2, Mic, ImageIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog'
 
 interface ChatMessageProps {
   message: UIMessage
   isAudioMessage?: boolean
 }
 
+type AvanceConImagenes = {
+  fecha: string
+  sector?: string
+  tarea?: string
+  rubro?: string
+  descripcion: string
+  imagenes?: Array<{ url: string; nombre: string | null }>
+}
+
+function normalizeName(s: string | undefined | null): string {
+  return (s || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 // Renders assistant text with visual hierarchy:
 // - Unidad title (largest)
 // - Rubro headers (medium)
 // - Tarea items (smallest, with check for finalizada)
-function FormattedAssistantText({ text }: { text: string }) {
+// Image links associated to a tarea are rendered inline under that tarea.
+function FormattedAssistantText({
+  text,
+  avancesImages = [],
+}: {
+  text: string
+  avancesImages?: AvanceConImagenes[]
+}) {
   const lines = text.split('\n')
 
   // Detect whether this looks like a structured avances response
@@ -23,7 +55,27 @@ function FormattedAssistantText({ text }: { text: string }) {
     return <span className="whitespace-pre-wrap">{text}</span>
   }
 
+  // Find images for a given unidad (sector) + tarea pair from the tool output
+  const findImages = (
+    unidad: string,
+    taskName: string
+  ): Array<{ url: string; nombre: string | null }> => {
+    const u = normalizeName(unidad)
+    const t = normalizeName(taskName)
+    const match = avancesImages.find((a) => {
+      if (!a.imagenes || a.imagenes.length === 0) return false
+      const tareaMatches = normalizeName(a.tarea) === t
+      if (!tareaMatches) return false
+      const sector = normalizeName(a.sector)
+      // If we can match sector loosely, prefer it; otherwise accept tarea-only match
+      if (sector && u) return sector === u || sector.includes(u) || u.includes(sector)
+      return true
+    })
+    return match?.imagenes || []
+  }
+
   const elements: React.ReactNode[] = []
+  let currentUnidad = ''
 
   lines.forEach((rawLine, i) => {
     const line = rawLine.trim()
@@ -35,13 +87,14 @@ function FormattedAssistantText({ text }: { text: string }) {
     // Unidad title: "**Unidad: 503**" or "Unidad: 503"
     const unidadMatch = line.match(/^\*{0,2}\s*unidad\s*:\s*(.+?)\s*\*{0,2}$/i)
     if (unidadMatch) {
+      currentUnidad = unidadMatch[1].replace(/^unidad\s+/i, '')
       elements.push(
         <div
           key={`u-${i}`}
           className="flex items-center gap-2 mt-1 mb-1.5 first:mt-0"
         >
           <span className="text-base font-bold text-foreground">
-            Unidad {unidadMatch[1].replace(/^unidad\s+/i, '')}
+            Unidad {currentUnidad}
           </span>
         </div>
       )
@@ -61,25 +114,33 @@ function FormattedAssistantText({ text }: { text: string }) {
       }
       const isDone = /finalizad|✓|complet|termina/i.test(desc)
       const cleanDesc = desc.replace(/✓/g, '').trim()
+      const taskImages = findImages(currentUnidad, taskName)
       elements.push(
-        <div key={`t-${i}`} className="flex items-start gap-1.5 pl-3 py-0.5">
-          <span className="text-muted-foreground mt-1.5 h-1 w-1 shrink-0 rounded-full bg-muted-foreground/50" />
-          <span className="text-sm">
-            <span className="font-medium text-foreground/90">{taskName}</span>
-            {desc && (
-              <>
-                <span className="text-muted-foreground">: </span>
-                {isDone ? (
-                  <span className="inline-flex items-center gap-1 text-green-600 dark:text-green-400 font-medium">
-                    {cleanDesc || 'finalizada'}
-                    <CheckCircle2 className="h-3.5 w-3.5" />
-                  </span>
-                ) : (
-                  <span className="text-foreground/80">{cleanDesc}</span>
-                )}
-              </>
-            )}
-          </span>
+        <div key={`t-${i}`} className="flex flex-col pl-3 py-0.5">
+          <div className="flex items-start gap-1.5">
+            <span className="text-muted-foreground mt-1.5 h-1 w-1 shrink-0 rounded-full bg-muted-foreground/50" />
+            <span className="text-sm">
+              <span className="font-medium text-foreground/90">{taskName}</span>
+              {desc && (
+                <>
+                  <span className="text-muted-foreground">: </span>
+                  {isDone ? (
+                    <span className="inline-flex items-center gap-1 text-green-600 dark:text-green-400 font-medium">
+                      {cleanDesc || 'finalizada'}
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                    </span>
+                  ) : (
+                    <span className="text-foreground/80">{cleanDesc}</span>
+                  )}
+                </>
+              )}
+            </span>
+          </div>
+          {taskImages.length > 0 && (
+            <div className="pl-3">
+              <AvanceImageLink images={taskImages} label="Ver imagen" />
+            </div>
+          )}
         </div>
       )
       return
@@ -142,7 +203,7 @@ interface ToolPart {
     sugerencias?: Array<{ rubro: string; rubroId: string; tareas: { id: string; nombre: string }[] }>
     sugerencia_crear?: string
     rubros_disponibles?: Array<{ id: string; nombre: string }>
-    avances?: Array<{ fecha: string; sector?: string; tarea?: string; rubro?: string; descripcion: string }>
+    avances?: Array<{ fecha: string; sector?: string; tarea?: string; rubro?: string; descripcion: string; imagenes?: Array<{ url: string; nombre: string | null }> }>
     historial?: Array<{ fecha: string; descripcion: string; estado: string }>
     sectores?: Array<{ id: string; nombre: string; tipo: string }>
     rubros?: Array<{ id: string; nombre: string }>
@@ -153,6 +214,48 @@ function getToolCalls(message: UIMessage): ToolPart[] {
   if (!message.parts || !Array.isArray(message.parts)) return []
   return message.parts.filter(
     (p): p is ToolPart => typeof p.type === 'string' && p.type.startsWith('tool-')
+  )
+}
+
+// A link that opens an associated avance image in a popup dialog
+function AvanceImageLink({
+  images,
+  label,
+}: {
+  images: Array<{ url: string; nombre: string | null }>
+  label: string
+}) {
+  const [openIndex, setOpenIndex] = useState<number | null>(null)
+  if (!images || images.length === 0) return null
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-0.5">
+      {images.map((img, i) => (
+        <Dialog
+          key={i}
+          open={openIndex === i}
+          onOpenChange={(o) => setOpenIndex(o ? i : null)}
+        >
+          <DialogTrigger asChild>
+            <button
+              type="button"
+              className="inline-flex items-center gap-1 text-xs text-primary underline underline-offset-2 hover:opacity-80"
+            >
+              <ImageIcon className="h-3 w-3" />
+              {images.length > 1 ? `${label} ${i + 1}` : label}
+            </button>
+          </DialogTrigger>
+          <DialogContent className="max-w-2xl p-2">
+            <DialogTitle className="sr-only">{img.nombre || label}</DialogTitle>
+            <img
+              src={img.url || "/placeholder.svg"}
+              alt={img.nombre || label}
+              className="w-full h-auto rounded-md max-h-[80vh] object-contain"
+            />
+          </DialogContent>
+        </Dialog>
+      ))}
+    </div>
   )
 }
 
@@ -218,9 +321,9 @@ function ToolCallDisplay({ tool }: { tool: ToolPart }) {
     return null
   }
 
-  // consultarAvances - the LLM formats the response as grouped text,
-  // so we don't render the raw card display. Return null to let the
-  // assistant's text response (grouped by unidad/rubro/tarea) show.
+  // consultarAvances - the LLM formats the textual response grouped by unidad,
+  // and associated image links are rendered inline next to each tarea inside
+  // the assistant's text bubble (see ChatMessage). So nothing is shown here.
   if (toolName === 'consultarAvances') {
     return null
   }
@@ -302,6 +405,13 @@ export function ChatMessage({ message, isAudioMessage }: ChatMessageProps) {
   const text = getMessageText(message)
   const toolCalls = getToolCalls(message)
 
+  // Collect avances (with associated images) from consultarAvances output,
+  // so the text renderer can show image links inline next to each tarea.
+  const avancesImages = toolCalls
+    .filter((t) => t.type === 'tool-consultarAvances')
+    .flatMap((t) => t.output?.avances || [])
+    .filter((a) => a.imagenes && a.imagenes.length > 0)
+
   // Get images from parts
   const images = message.parts?.filter(
     (p): p is { type: 'file'; mimeType: string; url: string } => 
@@ -349,7 +459,7 @@ export function ChatMessage({ message, isAudioMessage }: ChatMessageProps) {
                 <Mic className="w-3 h-3" />
               </span>
             )}
-            {isUser ? text : <FormattedAssistantText text={text} />}
+            {isUser ? text : <FormattedAssistantText text={text} avancesImages={avancesImages} />}
           </div>
         )}
         {toolCalls.map((tool) => (

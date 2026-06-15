@@ -55,17 +55,29 @@ function normalizeMessages(messages: unknown[]): { role: string; content: string
   }).filter(m => m.content) // Remove empty messages
 }
 
+interface ImagenPendiente {
+  id: string
+  pathname: string
+  nombre?: string
+}
+
 export async function POST(req: Request) {
-  const { messages: rawMessages, obraId, sectores, rubros, tareas } = await req.json() as {
+  const { messages: rawMessages, obraId, sectores, rubros, tareas, imagenesPendientes } = await req.json() as {
     messages: unknown[]
     obraId: string
     sectores: SectorData[]
     rubros: RubroData[]
     tareas: TareaData[]
+    imagenesPendientes?: ImagenPendiente[]
   }
   
   // Normalize messages to handle both history (content string) and streaming (parts) formats
   const messages = normalizeMessages(rawMessages)
+  const pendingImages: ImagenPendiente[] = Array.isArray(imagenesPendientes) ? imagenesPendientes : []
+  console.log("[v0] POST /api/chat - pendingImages recibidas:", JSON.stringify(pendingImages))
+  // Mutable pool of images not yet associated during this request (avoids
+  // double-attaching the same image across multiple registrarAvance calls).
+  const imagenesDisponibles: ImagenPendiente[] = [...pendingImages]
 
   const supabase = await createClient()
   
@@ -103,6 +115,11 @@ export async function POST(req: Request) {
     ? rubrosWithTareas.join('\n')
     : '(No hay rubros configurados. Pide al usuario que los configure primero.)'
 
+  // Build pending images context
+  const imagenesContext = pendingImages.length > 0
+    ? `\n\nIMAGENES ADJUNTADAS EN ESTE MENSAJE (${pendingImages.length}):\n${pendingImages.map((img, i) => `- Imagen ${i + 1} (ID: ${img.id})${img.nombre ? ` "${img.nombre}"` : ''}`).join('\n')}`
+    : ''
+
   const systemPrompt = `Eres un asistente inteligente de obra que registra avances de construccion. Obra: "${obra.nombre}".
 Debes comportarte como un capataz experimentado que entiende el lenguaje informal de obra.
 
@@ -110,7 +127,15 @@ SECTORES DISPONIBLES:
 ${sectoresList}
 
 RUBROS Y TAREAS DISPONIBLES:
-${rubrosList}
+${rubrosList}${imagenesContext}
+
+=== MANEJO DE IMAGENES ===
+Cuando el usuario adjunta imagenes (ver "IMAGENES ADJUNTADAS EN ESTE MENSAJE"):
+- Las imagenes se asocian a un avance usando el parametro "imagen_ids" de registrarAvance.
+- Si el usuario reporta UN SOLO avance junto con la/las imagen/es: asocia TODAS las imagenes a ese avance automaticamente (pasa todos los IDs en imagen_ids).
+- Si el usuario reporta MULTIPLES avances y hay imagenes: NO adivines. PREGUNTA al usuario a cual avance corresponde cada imagen, refiriendote a ellas como "Imagen 1", "Imagen 2", etc. Recien cuando el usuario aclare, registra cada avance con su imagen_ids correspondiente.
+- Si hay imagenes adjuntas pero el usuario NO menciono ningun trabajo/avance: preguntale a que avance queres asociar la/las imagen/es.
+- NUNCA descartes una imagen adjunta sin asociarla o sin preguntar.
 
 === FLUJO DE TRABAJO OBLIGATORIO ===
 
@@ -147,28 +172,32 @@ PASO 3 - Al registrar, determina la descripcion segun estas reglas:
 - Si el usuario menciona multiples trabajos, procesalos uno por uno
 
 === FORMATO AL MOSTRAR AVANCES ===
-Agrupa los avances primero por UNIDAD, luego por RUBRO, luego lista las TAREAS.
+REGLA CRITICA: Muestra UNICAMENTE los avances que devuelve la herramienta consultarAvances en su campo "avances".
+- NO inventes, NO completes y NO agregues tareas que no esten en el resultado de consultarAvances.
+- La lista "RUBROS Y TAREAS DISPONIBLES" es solo el catalogo de tareas posibles; NO significa que esas tareas esten hechas ni finalizadas.
+- Una tarea esta "finalizada" SOLO si su avance tiene descripcion "finalizada". Si no aparece en el resultado de consultarAvances, NO la menciones.
+- Si consultarAvances devuelve una lista vacia (sin avances) para esa unidad, deci claramente que todavia no hay avances registrados en esa unidad. NUNCA inventes tareas finalizadas.
+- Usa exactamente la "descripcion" que viene en cada avance. No la cambies por "finalizada" salvo que la descripcion sea literalmente "finalizada".
+
+Agrupa los avances devueltos primero por UNIDAD, luego por RUBRO, luego lista las TAREAS.
 NO repitas el nombre de la unidad en cada linea. Formato:
 
 **Unidad: [NOMBRE]**
 [RUBRO]:
-- [tarea]: [descripcion o "finalizada ✓"]
-- [tarea]: [descripcion o "finalizada ✓"]
+- [tarea]: [descripcion]
+- [tarea]: [descripcion]
 
 [OTRO RUBRO]:
-- [tarea]: [descripcion o "finalizada ✓"]
+- [tarea]: [descripcion]
 
-Ejemplo:
+Ejemplo (suponiendo que consultarAvances devolvio EXACTAMENTE estos avances):
 **Unidad: 501**
 Yeseria:
 - paredes: finalizada ✓
 - cielorraso: falta una parte cerca de la ventana
 
-Electricidad:
-- tableros: finalizada ✓
-- tomas y teclas: se montaron dos nada mas
-
 NO incluyas fecha/hora a menos que el usuario la pida especificamente.
+NO incluyas enlaces ni URLs de imagenes en tu texto: la interfaz muestra automaticamente un enlace "Imagen asociada" debajo del avance correspondiente. Solo podes mencionar en palabras que un avance tiene una foto si es relevante.
 
 === FORMATO AL REGISTRAR ===
 "Registrado en [SECTOR]:
@@ -178,8 +207,13 @@ Tarea: [TAREA]"
 Responde en espanol, conciso y amigable. NUNCA termines sin dar una respuesta de texto al usuario.`
 
   const result = streamText({
-    model: groq('llama-3.3-70b-versatile'),
+    // gpt-oss-120b is a Groq production model with reliable tool calling,
+    // avoiding the malformed-tool-name bug seen with llama-3.3-70b-versatile.
+    model: groq('openai/gpt-oss-120b'),
     system: systemPrompt,
+    onError: ({ error }) => {
+      console.log('[v0] streamText onError:', error instanceof Error ? error.message : JSON.stringify(error))
+    },
     messages: messages as { role: 'user' | 'assistant'; content: string }[],
     tools: {
       analizarTexto: tool({
@@ -219,14 +253,16 @@ Responde en espanol, conciso y amigable. NUNCA termines sin dar una respuesta de
       }),
 
       registrarAvance: tool({
-        description: 'Registra UN avance de obra. SOLO usar cuando el nombre de la tarea coincide EXACTAMENTE con lo que dijo el usuario, o cuando el usuario confirmo la tarea.',
+        description: 'Registra UN avance de obra. SOLO usar cuando el nombre de la tarea coincide EXACTAMENTE con lo que dijo el usuario, o cuando el usuario confirmo la tarea. Si hay imagenes adjuntas que corresponden a este avance, pasa sus IDs en imagen_ids.',
         inputSchema: z.object({
           sector_id: z.string().describe('ID del sector'),
           tarea_id: z.string().describe('ID de la tarea'),
           descripcion: z.string().describe('Descripcion breve del avance'),
+          imagen_ids: z.array(z.string()).optional().describe('IDs de las imagenes adjuntas que corresponden a este avance (de la lista IMAGENES ADJUNTADAS)'),
         }),
-        execute: async ({ sector_id, tarea_id, descripcion }) => {
+        execute: async ({ sector_id, tarea_id, descripcion, imagen_ids }) => {
           try {
+            console.log("[v0] registrarAvance - imagen_ids del modelo:", JSON.stringify(imagen_ids), "| pendingImages disponibles:", JSON.stringify(pendingImages.map(p => p.id)))
             const sector = sectores.find((s) => s.id === sector_id)
             const tarea = tareas?.find((t) => t.id === tarea_id)
             const rubro = tarea ? rubros.find((r) => r.id === tarea.rubro_id) : null
@@ -262,9 +298,52 @@ Responde en espanol, conciso y amigable. NUNCA termines sin dar una respuesta de
               return { success: false, message: `Error: ${error.message}` }
             }
 
+            // Associate pending images with this avance.
+            // Prefer the IDs the model selected; if it registered an avance
+            // without specifying images but there are pending ones available,
+            // fall back to attaching all remaining images so they are never lost.
+            let imagenesAsociadas = 0
+            const idsAsociados: string[] = []
+            if (data && imagenesDisponibles.length > 0) {
+              let toAssociate: ImagenPendiente[]
+              if (imagen_ids && imagen_ids.length > 0) {
+                toAssociate = imagenesDisponibles.filter((img) => imagen_ids.includes(img.id))
+              } else {
+                // Fallback: model didn't pass IDs, attach all remaining images
+                toAssociate = [...imagenesDisponibles]
+              }
+              console.log("[v0] registrarAvance - imagenes a asociar:", JSON.stringify(toAssociate.map(i => i.id)))
+              if (toAssociate.length > 0) {
+                const rows = toAssociate.map((img) => ({
+                  avance_id: data.id,
+                  tipo: 'imagen' as const,
+                  blob_pathname: img.pathname,
+                  nombre_original: img.nombre || null,
+                }))
+                const { error: archErr } = await supabase.from('archivos').insert(rows)
+                if (archErr) {
+                  console.log("[v0] registrarAvance - error insertando archivos:", archErr.message)
+                } else {
+                  imagenesAsociadas = toAssociate.length
+                  idsAsociados.push(...toAssociate.map((img) => img.id))
+                  // Remove associated images from the available pool
+                  for (const img of toAssociate) {
+                    const idx = imagenesDisponibles.findIndex((p) => p.id === img.id)
+                    if (idx !== -1) imagenesDisponibles.splice(idx, 1)
+                  }
+                }
+              }
+            }
+
+            const imgMsg = imagenesAsociadas > 0
+              ? `\n${imagenesAsociadas} imagen(es) asociada(s).`
+              : ''
+
             return {
               success: true,
-              message: `Registrado en ${sector.nombre}:\nRubro: ${rubro?.nombre || 'Sin rubro'}\nTarea: ${tarea.nombre}`,
+              message: `Registrado en ${sector.nombre}:\nRubro: ${rubro?.nombre || 'Sin rubro'}\nTarea: ${tarea.nombre}${imgMsg}`,
+              // IDs the client should clear from its pending images list
+              imagenes_asociadas: idsAsociados,
             }
           } catch (err) {
             return { success: false, message: `Error inesperado: ${err}` }
@@ -316,7 +395,7 @@ Responde en espanol, conciso y amigable. NUNCA termines sin dar una respuesta de
           try {
             let query = supabase
               .from('avances')
-              .select(`*, sectores (nombre), rubros (nombre), tareas (nombre)`)
+              .select(`*, sectores (nombre), rubros (nombre), tareas (nombre), archivos (id, tipo, blob_pathname, nombre_original)`)
               .eq('obra_id', obraId)
               .eq('archivado', false)
               .order('created_at', { ascending: false })
@@ -329,12 +408,19 @@ Responde en espanol, conciso y amigable. NUNCA termines sin dar una respuesta de
             if (error) return { success: false, message: `Error: ${error.message}` }
             if (!data?.length) return { success: true, message: 'No hay avances registrados.', avances: [] }
 
+            interface ArchivoRow {
+              id: string
+              tipo: string
+              blob_pathname: string
+              nombre_original: string | null
+            }
             interface AvanceRow {
               created_at: string
               descripcion: string
               sectores?: { nombre: string } | null
               rubros?: { nombre: string } | null
               tareas?: { nombre: string } | null
+              archivos?: ArchivoRow[] | null
             }
 
             return {
@@ -346,6 +432,12 @@ Responde en espanol, conciso y amigable. NUNCA termines sin dar una respuesta de
                 tarea: a.tareas?.nombre,
                 rubro: a.rubros?.nombre,
                 descripcion: a.descripcion,
+                imagenes: (a.archivos || [])
+                  .filter((f) => f.tipo === 'imagen')
+                  .map((f) => ({
+                    url: `/api/file?pathname=${encodeURIComponent(f.blob_pathname)}`,
+                    nombre: f.nombre_original,
+                  })),
               })),
             }
           } catch (err) {
@@ -383,5 +475,12 @@ Responde en espanol, conciso y amigable. NUNCA termines sin dar una respuesta de
     stopWhen: stepCountIs(5),
   })
 
-  return result.toUIMessageStreamResponse()
+  return result.toUIMessageStreamResponse({
+    onError: (error) => {
+      // Surface a readable message to the client instead of leaving it
+      // stuck in a "thinking" state when the model/stream fails.
+      console.log('[v0] toUIMessageStreamResponse onError:', error instanceof Error ? error.message : JSON.stringify(error))
+      return 'Hubo un problema procesando tu mensaje. Por favor, intenta reformularlo o envialo de nuevo.'
+    },
+  })
 }
