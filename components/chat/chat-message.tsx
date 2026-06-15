@@ -16,11 +16,36 @@ interface ChatMessageProps {
   isAudioMessage?: boolean
 }
 
+type AvanceConImagenes = {
+  fecha: string
+  sector?: string
+  tarea?: string
+  rubro?: string
+  descripcion: string
+  imagenes?: Array<{ url: string; nombre: string | null }>
+}
+
+function normalizeName(s: string | undefined | null): string {
+  return (s || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 // Renders assistant text with visual hierarchy:
 // - Unidad title (largest)
 // - Rubro headers (medium)
 // - Tarea items (smallest, with check for finalizada)
-function FormattedAssistantText({ text }: { text: string }) {
+// Image links associated to a tarea are rendered inline under that tarea.
+function FormattedAssistantText({
+  text,
+  avancesImages = [],
+}: {
+  text: string
+  avancesImages?: AvanceConImagenes[]
+}) {
   const lines = text.split('\n')
 
   // Detect whether this looks like a structured avances response
@@ -30,7 +55,27 @@ function FormattedAssistantText({ text }: { text: string }) {
     return <span className="whitespace-pre-wrap">{text}</span>
   }
 
+  // Find images for a given unidad (sector) + tarea pair from the tool output
+  const findImages = (
+    unidad: string,
+    taskName: string
+  ): Array<{ url: string; nombre: string | null }> => {
+    const u = normalizeName(unidad)
+    const t = normalizeName(taskName)
+    const match = avancesImages.find((a) => {
+      if (!a.imagenes || a.imagenes.length === 0) return false
+      const tareaMatches = normalizeName(a.tarea) === t
+      if (!tareaMatches) return false
+      const sector = normalizeName(a.sector)
+      // If we can match sector loosely, prefer it; otherwise accept tarea-only match
+      if (sector && u) return sector === u || sector.includes(u) || u.includes(sector)
+      return true
+    })
+    return match?.imagenes || []
+  }
+
   const elements: React.ReactNode[] = []
+  let currentUnidad = ''
 
   lines.forEach((rawLine, i) => {
     const line = rawLine.trim()
@@ -42,13 +87,14 @@ function FormattedAssistantText({ text }: { text: string }) {
     // Unidad title: "**Unidad: 503**" or "Unidad: 503"
     const unidadMatch = line.match(/^\*{0,2}\s*unidad\s*:\s*(.+?)\s*\*{0,2}$/i)
     if (unidadMatch) {
+      currentUnidad = unidadMatch[1].replace(/^unidad\s+/i, '')
       elements.push(
         <div
           key={`u-${i}`}
           className="flex items-center gap-2 mt-1 mb-1.5 first:mt-0"
         >
           <span className="text-base font-bold text-foreground">
-            Unidad {unidadMatch[1].replace(/^unidad\s+/i, '')}
+            Unidad {currentUnidad}
           </span>
         </div>
       )
@@ -68,25 +114,33 @@ function FormattedAssistantText({ text }: { text: string }) {
       }
       const isDone = /finalizad|✓|complet|termina/i.test(desc)
       const cleanDesc = desc.replace(/✓/g, '').trim()
+      const taskImages = findImages(currentUnidad, taskName)
       elements.push(
-        <div key={`t-${i}`} className="flex items-start gap-1.5 pl-3 py-0.5">
-          <span className="text-muted-foreground mt-1.5 h-1 w-1 shrink-0 rounded-full bg-muted-foreground/50" />
-          <span className="text-sm">
-            <span className="font-medium text-foreground/90">{taskName}</span>
-            {desc && (
-              <>
-                <span className="text-muted-foreground">: </span>
-                {isDone ? (
-                  <span className="inline-flex items-center gap-1 text-green-600 dark:text-green-400 font-medium">
-                    {cleanDesc || 'finalizada'}
-                    <CheckCircle2 className="h-3.5 w-3.5" />
-                  </span>
-                ) : (
-                  <span className="text-foreground/80">{cleanDesc}</span>
-                )}
-              </>
-            )}
-          </span>
+        <div key={`t-${i}`} className="flex flex-col pl-3 py-0.5">
+          <div className="flex items-start gap-1.5">
+            <span className="text-muted-foreground mt-1.5 h-1 w-1 shrink-0 rounded-full bg-muted-foreground/50" />
+            <span className="text-sm">
+              <span className="font-medium text-foreground/90">{taskName}</span>
+              {desc && (
+                <>
+                  <span className="text-muted-foreground">: </span>
+                  {isDone ? (
+                    <span className="inline-flex items-center gap-1 text-green-600 dark:text-green-400 font-medium">
+                      {cleanDesc || 'finalizada'}
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                    </span>
+                  ) : (
+                    <span className="text-foreground/80">{cleanDesc}</span>
+                  )}
+                </>
+              )}
+            </span>
+          </div>
+          {taskImages.length > 0 && (
+            <div className="pl-3">
+              <AvanceImageLink images={taskImages} label="Ver imagen" />
+            </div>
+          )}
         </div>
       )
       return
@@ -267,29 +321,11 @@ function ToolCallDisplay({ tool }: { tool: ToolPart }) {
     return null
   }
 
-  // consultarAvances - the LLM formats the textual response grouped by unidad.
-  // Here we only render links to any associated images (shown as a popup),
-  // since images must not be embedded directly in the chat bubble.
+  // consultarAvances - the LLM formats the textual response grouped by unidad,
+  // and associated image links are rendered inline next to each tarea inside
+  // the assistant's text bubble (see ChatMessage). So nothing is shown here.
   if (toolName === 'consultarAvances') {
-    const withImages = (output.avances || []).filter(
-      (a) => a.imagenes && a.imagenes.length > 0
-    )
-    if (withImages.length === 0) return null
-    return (
-      <div className="bg-muted/50 rounded-lg px-3 py-2 text-sm space-y-1.5">
-        <div className="text-xs font-medium text-muted-foreground">
-          Imagenes asociadas
-        </div>
-        {withImages.map((a, i) => (
-          <div key={i} className="flex flex-col">
-            <span className="text-xs text-foreground/80">
-              {a.sector ? `${a.sector} — ` : ''}{a.tarea || a.rubro}
-            </span>
-            <AvanceImageLink images={a.imagenes!} label="Ver imagen" />
-          </div>
-        ))}
-      </div>
-    )
+    return null
   }
 
   // consultarHistorial - history of a task+sector
@@ -369,6 +405,13 @@ export function ChatMessage({ message, isAudioMessage }: ChatMessageProps) {
   const text = getMessageText(message)
   const toolCalls = getToolCalls(message)
 
+  // Collect avances (with associated images) from consultarAvances output,
+  // so the text renderer can show image links inline next to each tarea.
+  const avancesImages = toolCalls
+    .filter((t) => t.type === 'tool-consultarAvances')
+    .flatMap((t) => t.output?.avances || [])
+    .filter((a) => a.imagenes && a.imagenes.length > 0)
+
   // Get images from parts
   const images = message.parts?.filter(
     (p): p is { type: 'file'; mimeType: string; url: string } => 
@@ -416,7 +459,7 @@ export function ChatMessage({ message, isAudioMessage }: ChatMessageProps) {
                 <Mic className="w-3 h-3" />
               </span>
             )}
-            {isUser ? text : <FormattedAssistantText text={text} />}
+            {isUser ? text : <FormattedAssistantText text={text} avancesImages={avancesImages} />}
           </div>
         )}
         {toolCalls.map((tool) => (
