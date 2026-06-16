@@ -206,6 +206,42 @@ Tarea: [TAREA]"
 
 Responde en espanol, conciso y amigable. NUNCA termines sin dar una respuesta de texto al usuario.`
 
+  const analizarTextoTool = tool({
+    description: 'OBLIGATORIO: Usa esta herramienta PRIMERO cuando el usuario mencione un trabajo o avance. Analiza semanticamente el texto y determina la tarea mas probable.',
+    inputSchema: z.object({
+      texto_usuario: z.string().describe('El texto completo que escribio el usuario'),
+    }),
+    execute: async ({ texto_usuario }) => {
+      try {
+        const matches = findBestMatch(texto_usuario, tareas, rubros)
+        const decision = getMatchDecision(matches)
+
+        return {
+          success: true,
+          action: decision.action,
+          topMatch: decision.topMatch ? {
+            tarea_id: decision.topMatch.tarea.id,
+            tarea_nombre: decision.topMatch.tarea.nombre,
+            rubro_id: decision.topMatch.rubro?.id,
+            rubro_nombre: decision.topMatch.rubro?.nombre,
+            score: Math.round(decision.topMatch.score * 100),
+            matchType: decision.topMatch.matchType,
+          } : null,
+          alternatives: decision.alternatives.map(m => ({
+            tarea_id: m.tarea.id,
+            tarea_nombre: m.tarea.nombre,
+            rubro_nombre: m.rubro?.nombre,
+            score: Math.round(m.score * 100),
+          })),
+          message: decision.message,
+          texto_original: texto_usuario,
+        }
+      } catch (err) {
+        return { success: false, message: `Error: ${err}` }
+      }
+    },
+  })
+
   const result = streamText({
     // gpt-oss-120b is a Groq production model with reliable tool calling,
     // avoiding the malformed-tool-name bug seen with llama-3.3-70b-versatile.
@@ -216,41 +252,11 @@ Responde en espanol, conciso y amigable. NUNCA termines sin dar una respuesta de
     },
     messages: messages as { role: 'user' | 'assistant'; content: string }[],
     tools: {
-      analizarTexto: tool({
-        description: 'OBLIGATORIO: Usa esta herramienta PRIMERO cuando el usuario mencione un trabajo o avance. Analiza semanticamente el texto y determina la tarea mas probable.',
-        inputSchema: z.object({
-          texto_usuario: z.string().describe('El texto completo que escribio el usuario'),
-        }),
-        execute: async ({ texto_usuario }) => {
-          try {
-            const matches = findBestMatch(texto_usuario, tareas, rubros)
-            const decision = getMatchDecision(matches)
-            
-            return {
-              success: true,
-              action: decision.action,
-              topMatch: decision.topMatch ? {
-                tarea_id: decision.topMatch.tarea.id,
-                tarea_nombre: decision.topMatch.tarea.nombre,
-                rubro_id: decision.topMatch.rubro?.id,
-                rubro_nombre: decision.topMatch.rubro?.nombre,
-                score: Math.round(decision.topMatch.score * 100),
-                matchType: decision.topMatch.matchType,
-              } : null,
-              alternatives: decision.alternatives.map(m => ({
-                tarea_id: m.tarea.id,
-                tarea_nombre: m.tarea.nombre,
-                rubro_nombre: m.rubro?.nombre,
-                score: Math.round(m.score * 100),
-              })),
-              message: decision.message,
-              texto_original: texto_usuario,
-            }
-          } catch (err) {
-            return { success: false, message: `Error: ${err}` }
-          }
-        },
-      }),
+      analizarTexto: analizarTextoTool,
+      // Aliases for common model misspellings of "analizarTexto" so a malformed
+      // tool name does not break the whole stream.
+      analisarTexto: analizarTextoTool,
+      analizartexto: analizarTextoTool,
 
       registrarAvance: tool({
         description: 'Registra UN avance de obra. SOLO usar cuando el nombre de la tarea coincide EXACTAMENTE con lo que dijo el usuario, o cuando el usuario confirmo la tarea. Si hay imagenes adjuntas que corresponden a este avance, pasa sus IDs en imagen_ids.',

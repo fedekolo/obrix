@@ -80,12 +80,13 @@ function DateSeparator({ date }: { date: string }) {
 export function ChatInterface({ obraId, sectores, rubros, tareas }: ChatInterfaceProps) {
   const [isLoadingHistory, setIsLoadingHistory] = useState(true)
   const [initialMessages, setInitialMessages] = useState<MessageWithDate[]>([])
+  const [initialHasMore, setInitialHasMore] = useState(false)
 
-  // Load chat history on mount
+  // Load most recent page (20 messages) of chat history on mount
   useEffect(() => {
     const loadHistory = async () => {
       try {
-        const res = await fetch(`/api/chat/history?obraId=${obraId}`)
+        const res = await fetch(`/api/chat/history?obraId=${obraId}&offset=0`)
         if (res.ok) {
           const data = await res.json()
           const storedMessages = data.messages
@@ -98,6 +99,7 @@ export function ChatInterface({ obraId, sectores, rubros, tareas }: ChatInterfac
             }))
             setInitialMessages(converted)
           }
+          setInitialHasMore(!!data.hasMore)
         }
       } catch {
         // Failed to load history, continue with empty chat
@@ -124,6 +126,7 @@ export function ChatInterface({ obraId, sectores, rubros, tareas }: ChatInterfac
       rubros={rubros}
       tareas={tareas}
       initialMessages={initialMessages}
+      initialHasMore={initialHasMore}
     />
   )
 }
@@ -135,16 +138,21 @@ function ChatInterfaceInner({
   rubros, 
   tareas,
   initialMessages,
-}: ChatInterfaceProps & { initialMessages: MessageWithDate[] }) {
+  initialHasMore,
+}: ChatInterfaceProps & { initialMessages: MessageWithDate[]; initialHasMore: boolean }) {
   const [isRecording, setIsRecording] = useState(false)
   const [isTranscribing, setIsTranscribing] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([])
   const [audioMessageIds, setAudioMessageIds] = useState<Set<string>>(new Set())
+  const [olderMessages, setOlderMessages] = useState<MessageWithDate[]>([])
+  const [hasMore, setHasMore] = useState(initialHasMore)
+  const [isLoadingMore, setIsLoadingMore] = useState(false)
   const pendingAudioRef = useRef(false)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const cameraInputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -195,17 +203,63 @@ function ChatInterfaceInner({
 
   const isLoading = status === 'streaming' || status === 'submitted'
 
-  // Merge messages with dates for rendering
+  // Track saved message IDs to avoid duplicates / re-posting
+  const savedIdsRef = useRef<Set<string>>(new Set(initialMessages.map(m => m.id)))
+
+  // Track how many messages are already loaded (older + initial) for the offset
+  const loadedCountRef = useRef(initialMessages.length)
+  useEffect(() => {
+    loadedCountRef.current = olderMessages.length + initialMessages.length
+  }, [olderMessages.length, initialMessages.length])
+
+  // Load an older page (20) and prepend it, preserving scroll position
+  const loadMore = useCallback(async () => {
+    if (isLoadingMore) return
+    setIsLoadingMore(true)
+    const container = scrollContainerRef.current
+    const prevScrollHeight = container?.scrollHeight ?? 0
+    try {
+      const res = await fetch(`/api/chat/history?obraId=${obraId}&offset=${loadedCountRef.current}`)
+      if (res.ok) {
+        const data = await res.json()
+        const stored: StoredMessage[] = data.messages || []
+        const converted: MessageWithDate[] = stored.map((m) => ({
+          id: m.id,
+          role: m.role,
+          content: m.content,
+          createdAt: m.created_at,
+        }))
+        if (converted.length > 0) {
+          setOlderMessages(prev => [...converted, ...prev])
+          // Mark older messages as already saved to avoid re-posting them
+          converted.forEach(m => savedIdsRef.current.add(m.id))
+        }
+        setHasMore(!!data.hasMore)
+        // Preserve scroll position after prepending older messages
+        requestAnimationFrame(() => {
+          if (container) {
+            container.scrollTop = container.scrollHeight - prevScrollHeight
+          }
+        })
+      }
+    } catch {
+      // Failed to load more
+    } finally {
+      setIsLoadingMore(false)
+    }
+  }, [isLoadingMore, obraId])
+
+  // Merge messages with dates for rendering (older history + current session)
   const messagesWithDates = useMemo(() => {
-    // Cast messages to include potential createdAt from history
-    return messages.map((msg, index) => {
+    const current = messages.map((msg, index) => {
       const historyMsg = initialMessages.find(h => h.id === msg.id)
       return {
         ...msg,
         createdAt: historyMsg?.createdAt || (index === 0 ? undefined : new Date().toISOString()),
       } as MessageWithDate
     })
-  }, [messages, initialMessages])
+    return [...olderMessages, ...current]
+  }, [messages, initialMessages, olderMessages])
 
   // Save message to history
   const saveMessage = useCallback(async (role: 'user' | 'assistant', content: string) => {
@@ -219,9 +273,6 @@ function ChatInterfaceInner({
       // Failed to save, continue anyway
     }
   }, [obraId])
-
-  // Track saved message IDs to avoid duplicates
-  const savedIdsRef = useRef<Set<string>>(new Set(initialMessages.map(m => m.id)))
 
   // Save new messages when they appear and are complete
   useEffect(() => {
@@ -428,7 +479,7 @@ function ChatInterfaceInner({
   return (
     <div className="flex flex-col h-full">
       {/* Messages area */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto p-4 space-y-4">
         {messagesWithDates.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center p-8">
             <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mb-4">
@@ -449,25 +500,47 @@ function ChatInterfaceInner({
             </div>
           </div>
         ) : (
-          messagesWithDates.map((message, index) => {
-            // Check if we need a date separator
-            const currentDate = message.createdAt ? new Date(message.createdAt).toDateString() : null
-            const prevMessage = index > 0 ? messagesWithDates[index - 1] : null
-            const prevDate = prevMessage?.createdAt ? new Date(prevMessage.createdAt).toDateString() : null
-            const showDateSeparator = currentDate && currentDate !== prevDate
-            
-            return (
-              <div key={message.id}>
-                {showDateSeparator && message.createdAt && (
-                  <DateSeparator date={message.createdAt} />
-                )}
-                <ChatMessage 
-                  message={message} 
-                  isAudioMessage={audioMessageIds.has(message.id)}
-                />
+          <>
+            {hasMore && (
+              <div className="flex justify-center pb-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={loadMore}
+                  disabled={isLoadingMore}
+                >
+                  {isLoadingMore ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                      Cargando...
+                    </>
+                  ) : (
+                    'Cargar mas mensajes'
+                  )}
+                </Button>
               </div>
-            )
-          })
+            )}
+            {messagesWithDates.map((message, index) => {
+              // Check if we need a date separator
+              const currentDate = message.createdAt ? new Date(message.createdAt).toDateString() : null
+              const prevMessage = index > 0 ? messagesWithDates[index - 1] : null
+              const prevDate = prevMessage?.createdAt ? new Date(prevMessage.createdAt).toDateString() : null
+              const showDateSeparator = currentDate && currentDate !== prevDate
+              
+              return (
+                <div key={message.id}>
+                  {showDateSeparator && message.createdAt && (
+                    <DateSeparator date={message.createdAt} />
+                  )}
+                  <ChatMessage 
+                    message={message} 
+                    isAudioMessage={audioMessageIds.has(message.id)}
+                  />
+                </div>
+              )
+            })}
+          </>
         )}
         <div ref={messagesEndRef} />
       </div>

@@ -283,10 +283,9 @@ function ToolCallDisplay({ tool }: { tool: ToolPart }) {
     )
   }
 
-  // analizarTexto - don't show UI, the LLM will respond with text
-  if (toolName === 'analizarTexto') {
-    // This tool's output is used by the LLM to formulate a response
-    // We don't need to show it in the UI
+  // analizarTexto (and its misspelling aliases) - don't show UI,
+  // the LLM uses its output to formulate a text response.
+  if (toolName.toLowerCase().startsWith('anali')) {
     return null
   }
 
