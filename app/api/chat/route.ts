@@ -55,6 +55,38 @@ function normalizeMessages(messages: unknown[]): { role: string; content: string
   }).filter(m => m.content) // Remove empty messages
 }
 
+// Extracts ONLY the current turn so the model never re-registers old avances.
+// The "current turn" = all trailing consecutive user messages (messages the
+// user sent together since the last assistant reply). We also keep the single
+// immediately-preceding assistant message as context, so follow-up answers to
+// the bot's clarifying questions still work. Older user messages are dropped.
+function getCurrentTurn(
+  messages: { role: string; content: string }[]
+): { role: string; content: string }[] {
+  if (messages.length === 0) return messages
+
+  // Collect trailing consecutive user messages (the new turn)
+  let i = messages.length - 1
+  const trailingUser: { role: string; content: string }[] = []
+  while (i >= 0 && messages[i].role === 'user') {
+    trailingUser.unshift(messages[i])
+    i--
+  }
+
+  // If somehow the last message isn't a user message, just use the last one
+  if (trailingUser.length === 0) {
+    return [messages[messages.length - 1]]
+  }
+
+  // Include the immediately preceding assistant message for context only
+  const context: { role: string; content: string }[] = []
+  if (i >= 0 && messages[i].role === 'assistant') {
+    context.push(messages[i])
+  }
+
+  return [...context, ...trailingUser]
+}
+
 interface ImagenPendiente {
   id: string
   pathname: string
@@ -72,7 +104,11 @@ export async function POST(req: Request) {
   }
   
   // Normalize messages to handle both history (content string) and streaming (parts) formats
-  const messages = normalizeMessages(rawMessages)
+  const allMessages = normalizeMessages(rawMessages)
+  // Only send the current turn to the model so it never re-reads/re-registers
+  // old messages (e.g. avances from previous days).
+  const messages = getCurrentTurn(allMessages)
+  console.log("[v0] POST /api/chat - mensajes del turno actual:", JSON.stringify(messages.map(m => ({ role: m.role, content: m.content.slice(0, 80) }))))
   const pendingImages: ImagenPendiente[] = Array.isArray(imagenesPendientes) ? imagenesPendientes : []
   console.log("[v0] POST /api/chat - pendingImages recibidas:", JSON.stringify(pendingImages))
   // Mutable pool of images not yet associated during this request (avoids
@@ -138,6 +174,12 @@ Cuando el usuario adjunta imagenes (ver "IMAGENES ADJUNTADAS EN ESTE MENSAJE"):
 - NUNCA descartes una imagen adjunta sin asociarla o sin preguntar.
 
 === FLUJO DE TRABAJO OBLIGATORIO ===
+
+REGLA FUNDAMENTAL SOBRE QUE LEER:
+- Procesa UNICAMENTE el/los mensaje(s) NUEVO(S) del usuario (los del rol "user" al final de la conversacion).
+- Si hay un mensaje previo del asistente, usalo SOLO como contexto para entender una respuesta de seguimiento (por ejemplo, si el usuario responde a una pregunta que hiciste). NO vuelvas a registrar avances mencionados en mensajes anteriores.
+- NUNCA registres avances que ya fueron mencionados en turnos previos. Solo actua sobre el contenido del turno actual.
+- Si el usuario envio VARIOS mensajes juntos (varios mensajes "user" seguidos), tratalos como mensajes SEPARADOS: interpreta cada uno por su cuenta y responde a cada uno. No los mezcles ni asumas que forman un solo avance.
 
 PRIMERO - Identifica la intencion del mensaje del usuario:
 - Si MENCIONA UN TRABAJO/AVANCE realizado: sigue el flujo de registro (PASO 1 en adelante)
