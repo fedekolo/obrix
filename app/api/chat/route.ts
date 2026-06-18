@@ -289,6 +289,19 @@ Responde en espanol, conciso y amigable. NUNCA termines sin dar una respuesta de
     // avoiding the malformed-tool-name bug seen with llama-3.3-70b-versatile.
     model: groq('openai/gpt-oss-120b'),
     system: systemPrompt,
+    // Performance: gpt-oss is a reasoning model. By default it generates a lot
+    // of hidden "thinking" tokens which made responses take up to a minute.
+    // Lowering the reasoning effort and hiding the reasoning stream, plus
+    // allowing parallel tool calls (so multiple avances register in one step
+    // instead of sequential round-trips), dramatically reduces latency.
+    providerOptions: {
+      groq: {
+        reasoningEffort: 'low',
+        reasoningFormat: 'hidden',
+        parallelToolCalls: true,
+      },
+    },
+    temperature: 0.3,
     onError: ({ error }) => {
       console.log('[v0] streamText onError:', error instanceof Error ? error.message : JSON.stringify(error))
     },
