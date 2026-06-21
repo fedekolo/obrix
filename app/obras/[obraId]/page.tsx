@@ -1,7 +1,7 @@
 import { notFound, redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { ObraHeader } from '@/components/obras/obra-header'
-import { ChatInterface } from '@/components/chat/chat-interface'
+import { ObraWorkspace } from '@/components/obras/obra-workspace'
 
 interface ObraPageProps {
   params: Promise<{ obraId: string }>
@@ -51,7 +51,7 @@ export default async function ObraPage({ params }: ObraPageProps) {
         esPropietario={esPropietario} 
       />
       <div className="flex-1 overflow-hidden">
-        <ChatInterface 
+        <ObraWorkspace 
           obraId={obraId}
           sectores={sectores || []}
           rubros={rubros || []}
