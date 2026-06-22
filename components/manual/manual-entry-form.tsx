@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, useMemo } from 'react'
-import { Loader2, Camera, Image as ImageIcon, ImagePlus, X, CheckCircle2 } from 'lucide-react'
+import { Loader2, Camera, Image as ImageIcon, ImagePlus, X, CheckCircle2, ChevronDown } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
@@ -53,6 +53,72 @@ export function ManualEntryForm({ obraId, sectores, rubros, tareas }: ManualEntr
     () => tareas.filter((t) => t.rubro_id === rubroId),
     [tareas, rubroId]
   )
+
+  // Agrupa las unidades por piso, calculado a partir del numero de unidad:
+  // 501 -> piso 5, 1204 -> piso 12. Las unidades sin numero reconocible van a "Otros".
+  const pisos = useMemo(() => {
+    const groups = new Map<string, { key: string; label: string; orden: number; sectores: Sector[] }>()
+    for (const sector of sectores) {
+      const match = sector.nombre.match(/\d+/)
+      let key: string
+      let label: string
+      let orden: number
+      if (match) {
+        const num = parseInt(match[0], 10)
+        const piso = Math.floor(num / 100)
+        if (piso > 0) {
+          key = String(piso)
+          label = `Piso ${piso}`
+          orden = piso
+        } else {
+          key = 'otros'
+          label = 'Otros'
+          orden = Number.MAX_SAFE_INTEGER
+        }
+      } else {
+        key = 'otros'
+        label = 'Otros'
+        orden = Number.MAX_SAFE_INTEGER
+      }
+      if (!groups.has(key)) {
+        groups.set(key, { key, label, orden, sectores: [] })
+      }
+      groups.get(key)!.sectores.push(sector)
+    }
+    // Ordena los pisos y las unidades dentro de cada piso
+    const result = Array.from(groups.values()).sort((a, b) => a.orden - b.orden)
+    for (const g of result) {
+      g.sectores.sort((a, b) => a.nombre.localeCompare(b.nombre, undefined, { numeric: true }))
+    }
+    return result
+  }, [sectores])
+
+  // Pisos colapsados (por defecto todos expandidos)
+  const [collapsedPisos, setCollapsedPisos] = useState<Set<string>>(new Set())
+
+  const togglePisoCollapsed = (key: string) => {
+    setCollapsedPisos((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  const toggleSelectAllPiso = (pisoSectores: Sector[]) => {
+    setSuccess(null)
+    const ids = pisoSectores.map((s) => s.id)
+    const allSelected = ids.every((id) => selectedSectores.has(id))
+    setSelectedSectores((prev) => {
+      const next = new Set(prev)
+      if (allSelected) {
+        ids.forEach((id) => next.delete(id))
+      } else {
+        ids.forEach((id) => next.add(id))
+      }
+      return next
+    })
+  }
 
   const toggleSector = (id: string) => {
     setSuccess(null)
@@ -144,8 +210,10 @@ export function ManualEntryForm({ obraId, sectores, rubros, tareas }: ManualEntr
           : `Se registraron correctamente ${n} avances.`
       )
 
-      // Reset del formulario (mantiene rubro/tarea para cargas repetidas rápidas)
+      // Reset completo del formulario (mantiene solo el mensaje de éxito)
       setSelectedSectores(new Set())
+      setRubroId('')
+      setTareaId('')
       setObservacion('')
       setImages([])
     } catch {
@@ -171,24 +239,68 @@ export function ManualEntryForm({ obraId, sectores, rubros, tareas }: ManualEntr
               No hay unidades configuradas. Configurá los sectores primero.
             </p>
           ) : (
-            <div className="flex flex-wrap gap-2 pt-1">
-              {sectores.map((sector) => {
-                const isSelected = selectedSectores.has(sector.id)
+            <div className="space-y-2 pt-1">
+              {pisos.map((piso) => {
+                const isCollapsed = collapsedPisos.has(piso.key)
+                const selectedCount = piso.sectores.filter((s) =>
+                  selectedSectores.has(s.id)
+                ).length
+                const allSelected =
+                  selectedCount === piso.sectores.length && piso.sectores.length > 0
                 return (
-                  <button
-                    key={sector.id}
-                    type="button"
-                    onClick={() => toggleSector(sector.id)}
-                    aria-pressed={isSelected}
-                    className={cn(
-                      'rounded-full border px-3 py-1.5 text-sm font-medium transition-colors',
-                      isSelected
-                        ? 'bg-primary text-primary-foreground border-primary'
-                        : 'bg-background text-foreground border-input hover:bg-muted'
+                  <div key={piso.key} className="rounded-lg border overflow-hidden">
+                    <div className="flex items-center justify-between bg-muted/50 px-3 py-2">
+                      <button
+                        type="button"
+                        onClick={() => togglePisoCollapsed(piso.key)}
+                        aria-expanded={!isCollapsed}
+                        className="flex items-center gap-2 text-sm font-medium"
+                      >
+                        <ChevronDown
+                          className={cn(
+                            'w-4 h-4 transition-transform',
+                            isCollapsed && '-rotate-90'
+                          )}
+                        />
+                        {piso.label}
+                        {selectedCount > 0 && (
+                          <span className="text-xs font-normal text-muted-foreground">
+                            ({selectedCount}/{piso.sectores.length})
+                          </span>
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => toggleSelectAllPiso(piso.sectores)}
+                        className="text-xs font-medium text-primary hover:underline"
+                      >
+                        {allSelected ? 'Deseleccionar piso' : 'Seleccionar todo el piso'}
+                      </button>
+                    </div>
+                    {!isCollapsed && (
+                      <div className="flex flex-wrap gap-2 p-3">
+                        {piso.sectores.map((sector) => {
+                          const isSelected = selectedSectores.has(sector.id)
+                          return (
+                            <button
+                              key={sector.id}
+                              type="button"
+                              onClick={() => toggleSector(sector.id)}
+                              aria-pressed={isSelected}
+                              className={cn(
+                                'rounded-full border px-3 py-1.5 text-sm font-medium transition-colors',
+                                isSelected
+                                  ? 'bg-primary text-primary-foreground border-primary'
+                                  : 'bg-background text-foreground border-input hover:bg-muted'
+                              )}
+                            >
+                              {sector.nombre}
+                            </button>
+                          )
+                        })}
+                      </div>
                     )}
-                  >
-                    {sector.nombre}
-                  </button>
+                  </div>
                 )
               })}
             </div>
