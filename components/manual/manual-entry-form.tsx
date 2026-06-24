@@ -37,7 +37,7 @@ interface UploadedImage {
 export function ManualEntryForm({ obraId, sectores, rubros, tareas }: ManualEntryFormProps) {
   const [selectedSectores, setSelectedSectores] = useState<Set<string>>(new Set())
   const [rubroId, setRubroId] = useState<string>('')
-  const [tareaId, setTareaId] = useState<string>('')
+  const [selectedTareas, setSelectedTareas] = useState<Set<string>>(new Set())
   const [observacion, setObservacion] = useState('')
   const [images, setImages] = useState<UploadedImage[]>([])
   const [isUploading, setIsUploading] = useState(false)
@@ -132,8 +132,18 @@ export function ManualEntryForm({ obraId, sectores, rubros, tareas }: ManualEntr
 
   const handleRubroChange = (value: string) => {
     setRubroId(value)
-    setTareaId('') // Reset tarea al cambiar de rubro
+    setSelectedTareas(new Set()) // Reset tareas al cambiar de rubro
     setSuccess(null)
+  }
+
+  const toggleTarea = (id: string) => {
+    setSuccess(null)
+    setSelectedTareas((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
   }
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -177,8 +187,8 @@ export function ManualEntryForm({ obraId, sectores, rubros, tareas }: ManualEntr
       setError('Selecciona un rubro.')
       return
     }
-    if (!tareaId) {
-      setError('Selecciona una tarea.')
+    if (selectedTareas.size === 0) {
+      setError('Selecciona al menos una tarea.')
       return
     }
 
@@ -190,7 +200,7 @@ export function ManualEntryForm({ obraId, sectores, rubros, tareas }: ManualEntr
         body: JSON.stringify({
           obraId,
           sectorIds: Array.from(selectedSectores),
-          tareaId,
+          tareaIds: Array.from(selectedTareas),
           observacion,
           imagenes: images.map((img) => ({ pathname: img.pathname, nombre: img.nombre })),
         }),
@@ -213,7 +223,7 @@ export function ManualEntryForm({ obraId, sectores, rubros, tareas }: ManualEntr
       // Reset completo del formulario (mantiene solo el mensaje de éxito)
       setSelectedSectores(new Set())
       setRubroId('')
-      setTareaId('')
+      setSelectedTareas(new Set())
       setObservacion('')
       setImages([])
     } catch {
@@ -331,25 +341,48 @@ export function ManualEntryForm({ obraId, sectores, rubros, tareas }: ManualEntr
           </Select>
         </div>
 
-        {/* Tarea */}
+        {/* Tareas */}
         <div className="space-y-2">
           <Label className="text-sm font-medium">
-            Tarea <span className="text-destructive">*</span>
+            Tareas <span className="text-destructive">*</span>
           </Label>
-          <Select value={tareaId} onValueChange={setTareaId} disabled={!rubroId}>
-            <SelectTrigger>
-              <SelectValue
-                placeholder={rubroId ? 'Seleccioná una tarea' : 'Primero elegí un rubro'}
-              />
-            </SelectTrigger>
-            <SelectContent>
-              {tareasFiltradas.map((tarea) => (
-                <SelectItem key={tarea.id} value={tarea.id}>
-                  {tarea.nombre}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <p className="text-xs text-muted-foreground">
+            {rubroId
+              ? 'Tocá las tareas que querés registrar. Podés seleccionar varias.'
+              : 'Primero elegí un rubro.'}
+          </p>
+          {rubroId && tareasFiltradas.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No hay tareas para este rubro.
+            </p>
+          ) : (
+            <div className="flex flex-wrap gap-2 pt-1">
+              {tareasFiltradas.map((tarea) => {
+                const isSelected = selectedTareas.has(tarea.id)
+                return (
+                  <button
+                    key={tarea.id}
+                    type="button"
+                    onClick={() => toggleTarea(tarea.id)}
+                    aria-pressed={isSelected}
+                    className={cn(
+                      'rounded-full border px-3 py-1.5 text-sm font-medium transition-colors',
+                      isSelected
+                        ? 'bg-primary text-primary-foreground border-primary'
+                        : 'bg-background text-foreground border-input hover:bg-muted'
+                    )}
+                  >
+                    {tarea.nombre}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+          {selectedTareas.size > 0 && (
+            <p className="text-xs text-muted-foreground pt-1">
+              {selectedTareas.size} tarea(s) seleccionada(s)
+            </p>
+          )}
         </div>
 
         {/* Observación */}

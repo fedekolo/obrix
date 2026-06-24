@@ -9,7 +9,7 @@ interface ImagenInput {
 interface ManualAvanceBody {
   obraId: string
   sectorIds: string[]
-  tareaId: string
+  tareaIds: string[]
   observacion?: string
   imagenes?: ImagenInput[]
 }
@@ -22,7 +22,7 @@ interface ManualAvanceBody {
 export async function POST(req: NextRequest) {
   try {
     const body = (await req.json()) as ManualAvanceBody
-    const { obraId, sectorIds, tareaId, observacion, imagenes } = body
+    const { obraId, sectorIds, tareaIds, observacion, imagenes } = body
 
     // Validaciones
     if (!obraId) {
@@ -31,8 +31,8 @@ export async function POST(req: NextRequest) {
     if (!sectorIds || sectorIds.length === 0) {
       return NextResponse.json({ error: 'Debe seleccionar al menos una unidad' }, { status: 400 })
     }
-    if (!tareaId) {
-      return NextResponse.json({ error: 'Debe seleccionar una tarea' }, { status: 400 })
+    if (!tareaIds || tareaIds.length === 0) {
+      return NextResponse.json({ error: 'Debe seleccionar al menos una tarea' }, { status: 400 })
     }
 
     const supabase = await createClient()
@@ -41,15 +41,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // Obtener la tarea para conocer su rubro_id
-    const { data: tarea, error: tareaError } = await supabase
+    // Obtener las tareas seleccionadas para conocer su rubro_id
+    const { data: tareasData, error: tareaError } = await supabase
       .from('tareas')
       .select('id, rubro_id')
-      .eq('id', tareaId)
-      .single()
+      .in('id', tareaIds)
 
-    if (tareaError || !tarea) {
-      return NextResponse.json({ error: 'Tarea no encontrada' }, { status: 404 })
+    if (tareaError || !tareasData || tareasData.length === 0) {
+      return NextResponse.json({ error: 'Tareas no encontradas' }, { status: 404 })
     }
 
     const descripcion = (observacion || '').trim()
@@ -57,49 +56,51 @@ export async function POST(req: NextRequest) {
 
     let creados = 0
 
-    // Un avance independiente por unidad
+    // Un avance independiente por cada combinacion unidad x tarea
     for (const sectorId of sectorIds) {
-      // Archivar avances activos previos de esta tarea+sector
-      await supabase
-        .from('avances')
-        .update({ archivado: true })
-        .eq('tarea_id', tareaId)
-        .eq('sector_id', sectorId)
-        .eq('archivado', false)
+      for (const tarea of tareasData) {
+        // Archivar avances activos previos de esta tarea+sector
+        await supabase
+          .from('avances')
+          .update({ archivado: true })
+          .eq('tarea_id', tarea.id)
+          .eq('sector_id', sectorId)
+          .eq('archivado', false)
 
-      // Insertar el nuevo avance
-      const { data: avance, error: insertError } = await supabase
-        .from('avances')
-        .insert({
-          obra_id: obraId,
-          sector_id: sectorId,
-          rubro_id: tarea.rubro_id,
-          tarea_id: tareaId,
-          user_id: user.id,
-          descripcion,
-          archivado: false,
-        })
-        .select()
-        .single()
+        // Insertar el nuevo avance
+        const { data: avance, error: insertError } = await supabase
+          .from('avances')
+          .insert({
+            obra_id: obraId,
+            sector_id: sectorId,
+            rubro_id: tarea.rubro_id,
+            tarea_id: tarea.id,
+            user_id: user.id,
+            descripcion,
+            archivado: false,
+          })
+          .select()
+          .single()
 
-      if (insertError || !avance) {
-        console.log('[v0] manual avance insert error:', insertError?.message)
-        continue
-      }
+        if (insertError || !avance) {
+          console.log('[v0] manual avance insert error:', insertError?.message)
+          continue
+        }
 
-      creados++
+        creados++
 
-      // Asociar las imagenes a este avance (mismas tablas que el chat)
-      if (imagenesValidas.length > 0) {
-        const rows = imagenesValidas.map((img) => ({
-          avance_id: avance.id,
-          tipo: 'imagen' as const,
-          blob_pathname: img.pathname,
-          nombre_original: img.nombre || null,
-        }))
-        const { error: archError } = await supabase.from('archivos').insert(rows)
-        if (archError) {
-          console.log('[v0] manual archivos insert error:', archError.message)
+        // Asociar las imagenes a este avance (mismas tablas que el chat)
+        if (imagenesValidas.length > 0) {
+          const rows = imagenesValidas.map((img) => ({
+            avance_id: avance.id,
+            tipo: 'imagen' as const,
+            blob_pathname: img.pathname,
+            nombre_original: img.nombre || null,
+          }))
+          const { error: archError } = await supabase.from('archivos').insert(rows)
+          if (archError) {
+            console.log('[v0] manual archivos insert error:', archError.message)
+          }
         }
       }
     }
