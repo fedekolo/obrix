@@ -146,27 +146,48 @@ export function ManualEntryForm({ obraId, sectores, rubros, tareas }: ManualEntr
     })
   }
 
+  // Defer the hidden input click so the closing dropdown menu (which restores
+  // focus to its trigger) doesn't cancel the file picker gesture on mobile.
+  const openPicker = (ref: React.RefObject<HTMLInputElement | null>) => {
+    setTimeout(() => ref.current?.click(), 0)
+  }
+
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files
+    console.log('[v0] manual upload - archivos seleccionados:', files?.length ?? 0)
     if (!files || files.length === 0) return
 
     setIsUploading(true)
     setError(null)
+    let failed = 0
     for (const file of Array.from(files)) {
       const formData = new FormData()
       formData.append('file', file)
       formData.append('obraId', obraId)
       try {
         const res = await fetch('/api/upload', { method: 'POST', body: formData })
+        console.log('[v0] manual upload - respuesta:', res.status)
         if (res.ok) {
           const { url, pathname } = await res.json()
           setImages((prev) => [...prev, { url, pathname, nombre: file.name }])
+        } else {
+          failed++
+          const data = await res.json().catch(() => ({}))
+          console.log('[v0] manual upload - error del servidor:', data?.error)
         }
-      } catch {
-        // Upload failed for this file
+      } catch (err) {
+        failed++
+        console.log('[v0] manual upload - excepción:', err instanceof Error ? err.message : String(err))
       }
     }
     setIsUploading(false)
+    if (failed > 0) {
+      setError(
+        failed === 1
+          ? 'No se pudo subir una imagen. Intentá de nuevo.'
+          : `No se pudieron subir ${failed} imágenes. Intentá de nuevo.`
+      )
+    }
     e.target.value = ''
   }
 
@@ -431,11 +452,11 @@ export function ManualEntryForm({ obraId, sectores, rubros, tareas }: ManualEntr
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start">
-                <DropdownMenuItem onSelect={() => cameraInputRef.current?.click()}>
+                <DropdownMenuItem onSelect={() => openPicker(cameraInputRef)}>
                   <Camera className="w-4 h-4 mr-2" />
                   Sacar foto
                 </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => fileInputRef.current?.click()}>
+                <DropdownMenuItem onSelect={() => openPicker(fileInputRef)}>
                   <ImageIcon className="w-4 h-4 mr-2" />
                   Elegir de galería
                 </DropdownMenuItem>
