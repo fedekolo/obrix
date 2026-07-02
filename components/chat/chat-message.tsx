@@ -52,7 +52,33 @@ function FormattedAssistantText({
   const hasStructure = /(\*\*\s*)?unidad\s*:/i.test(text)
 
   if (!hasStructure) {
-    return <span className="whitespace-pre-wrap">{text}</span>
+    // No structured "Unidad:" layout — still surface any avance images so
+    // they are never dropped just because the text isn't structured.
+    const allImages = avancesImages
+      .map((a) => ({
+        sector: a.sector,
+        tarea: a.tarea,
+        rubro: a.rubro,
+        imagenes: a.imagenes || [],
+      }))
+      .filter((a) => a.imagenes.length > 0)
+    return (
+      <div className="flex flex-col">
+        <span className="whitespace-pre-wrap">{text}</span>
+        {allImages.length > 0 && (
+          <div className="mt-2 space-y-1.5 border-t pt-2">
+            {allImages.map((a, idx) => (
+              <div key={`ni-${idx}`} className="flex flex-col">
+                <span className="text-xs text-muted-foreground">
+                  {[a.sector, a.tarea || a.rubro].filter(Boolean).join(' — ')}
+                </span>
+                <AvanceImageLink images={a.imagenes} label="Ver imagen" />
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    )
   }
 
   // Find images for a given unidad (sector) + tarea pair from the tool output
@@ -76,6 +102,10 @@ function FormattedAssistantText({
 
   const elements: React.ReactNode[] = []
   let currentUnidad = ''
+  // Track which images got rendered inline so we can show a fallback block
+  // for any that couldn't be matched to a tarea line (avoids silently
+  // dropping images when the model's text doesn't match DB names exactly).
+  const renderedUrls = new Set<string>()
 
   lines.forEach((rawLine, i) => {
     const line = rawLine.trim()
@@ -115,6 +145,7 @@ function FormattedAssistantText({
       const isDone = /finalizad|✓|complet|termina/i.test(desc)
       const cleanDesc = desc.replace(/✓/g, '').trim()
       const taskImages = findImages(currentUnidad, taskName)
+      taskImages.forEach((img) => renderedUrls.add(img.url))
       elements.push(
         <div key={`t-${i}`} className="flex flex-col pl-3 py-0.5">
           <div className="flex items-start gap-1.5">
@@ -168,7 +199,34 @@ function FormattedAssistantText({
     )
   })
 
-  return <div className="flex flex-col">{elements}</div>
+  // Fallback: any avance images that couldn't be matched to a tarea line
+  // inline are rendered here so uploaded images are never silently lost.
+  const leftover = avancesImages
+    .map((a) => ({
+      sector: a.sector,
+      tarea: a.tarea,
+      rubro: a.rubro,
+      imagenes: (a.imagenes || []).filter((img) => !renderedUrls.has(img.url)),
+    }))
+    .filter((a) => a.imagenes.length > 0)
+
+  return (
+    <div className="flex flex-col">
+      {elements}
+      {leftover.length > 0 && (
+        <div className="mt-2 space-y-1.5 border-t pt-2">
+          {leftover.map((a, idx) => (
+            <div key={`lo-${idx}`} className="flex flex-col">
+              <span className="text-xs text-muted-foreground">
+                {[a.sector, a.tarea || a.rubro].filter(Boolean).join(' — ')}
+              </span>
+              <AvanceImageLink images={a.imagenes} label="Ver imagen" />
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
 }
 
 function getMessageText(message: UIMessage): string {
